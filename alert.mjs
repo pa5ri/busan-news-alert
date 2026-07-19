@@ -148,6 +148,24 @@ async function runOnce() {
   saveState();
 }
 
+// ---- 밤 10시 1분(KST=13:01 UTC) 정리보고 트리거 ----
+// GitHub 크론이 이 계정에서 발화하지 않는 문제 대응: 상시 도는 이 루프가 시계를 보고 직접 깨운다.
+// nightly.yml 쪽 가드가 당일 중복 실행을 걸러주므로 여러 번 쏘여도 안전.
+let nightlyFired = false;
+async function maybeTriggerNightly() {
+  if (nightlyFired || !process.env.GH_TOKEN || !process.env.REPO) return;
+  const now = new Date();
+  const mins = now.getUTCHours() * 60 + now.getUTCMinutes();      // UTC 기준
+  if (mins >= 13 * 60 + 1 && mins < 14 * 60) {                    // 13:01 ~ 13:59 UTC = 22:01 ~ 22:59 KST
+    nightlyFired = true;
+    try {
+      const { execSync } = await import("node:child_process");
+      execSync(`gh workflow run nightly.yml -R ${process.env.REPO} -f auto=true`, { stdio: "inherit" });
+      console.log("🌙 밤10시 정리보고 트리거 완료");
+    } catch (e) { console.error("nightly 트리거 실패:", e.message); }
+  }
+}
+
 // ---- 실행: 단발 또는 반복 모드 ----
 // POLL_INTERVAL_SEC(기본 0=1회 실행), POLL_DURATION_MIN(반복 총 시간)
 const intervalSec = Number(process.env.POLL_INTERVAL_SEC || 0);
@@ -157,6 +175,7 @@ if (intervalSec > 0 && durationMin > 0) {
   console.log(`반복 모드: ${intervalSec}초 간격, ${durationMin}분간`);
   while (Date.now() < until) {
     try { await runOnce(); } catch (e) { console.error("폴링 오류:", e.message); }
+    await maybeTriggerNightly();
     const remain = until - Date.now();
     if (remain <= intervalSec * 1000) break;
     await new Promise(r2 => setTimeout(r2, intervalSec * 1000));

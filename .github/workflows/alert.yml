@@ -2,9 +2,7 @@ name: 부산 뉴스속보 (2분 폴링)
 
 on:
   schedule:
-    # 15분마다 기상 시도 — GitHub 크론은 자주 미발화되므로 여러 번 시도해 하나만 걸려도
-    # concurrency 대기열을 통해 직전 58분 루프가 끝나는 즉시 다음 루프가 이어짐
-    - cron: "*/15 * * * *"
+    - cron: "*/15 * * * *"   # 보험용 기상 시도 (크론이 작동하게 되면 자동 재점화 역할)
   workflow_dispatch: {}
 
 concurrency:
@@ -13,6 +11,7 @@ concurrency:
 
 permissions:
   contents: write            # state.json 커밋용
+  actions: write             # 자가 연쇄(다음 루프) + 밤10시 보고 트리거용
 
 jobs:
   poll:
@@ -31,6 +30,8 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           POLL_INTERVAL_SEC: "120"
           POLL_DURATION_MIN: "58"
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: node alert.mjs
       - name: 상태 저장(커밋)
         if: always()
@@ -41,3 +42,8 @@ jobs:
           git add state.json
           git diff --cached --quiet || git commit -m "state update [skip ci]"
           git push || true
+      - name: 다음 루프 자가 연쇄 (크론 불신 대비)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run alert.yml -R ${{ github.repository }} || true

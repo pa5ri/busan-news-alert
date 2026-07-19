@@ -1,0 +1,57 @@
+name: 밤10시 뉴스 정리보고
+
+on:
+  schedule:
+    - cron: "1 13 * * *"    # 22:01 KST (크론이 작동할 경우의 본 실행 — 현재는 보험)
+    - cron: "21 13 * * *"   # 22:21 KST 예비
+    - cron: "41 13 * * *"   # 22:41 KST 예비
+  workflow_dispatch:
+    inputs:
+      auto:
+        description: "속보 루프의 자동 트리거 여부"
+        required: false
+        default: ""
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: 오늘 밤 이미 발송했는지 확인 (자동 실행만 해당)
+        id: guard
+        if: github.event_name == 'schedule' || github.event.inputs.auto == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          today=$(date -u +%Y-%m-%d)
+          n=$(gh api "repos/${{ github.repository }}/actions/workflows/nightly.yml/runs?status=success&created=%3E${today}T12:30:00Z" -q '.total_count')
+          echo "already=$n" >> "$GITHUB_OUTPUT"
+          echo "오늘 밤 성공 발송 횟수: $n"
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.already == '0' || steps.guard.outcome == 'skipped'
+        with:
+          node-version: "22"
+      - name: 의존성 설치 (Puppeteer 크롬 포함)
+        if: steps.guard.outputs.already == '0' || steps.guard.outcome == 'skipped'
+        working-directory: nightly
+        run: |
+          npm ci
+          npx puppeteer browsers install chrome
+      - name: 수집 → 엑셀 → 텔레그램 전송
+        if: steps.guard.outputs.already == '0' || steps.guard.outcome == 'skipped'
+        working-directory: nightly
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_NIGHTLY_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          NAVER_ID: ${{ secrets.NAVER_ID }}
+          NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
+        run: node run.mjs
