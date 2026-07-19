@@ -2,6 +2,7 @@
 // env: NAVER_ID, NAVER_SECRET (NAVER API HUB), TG_BOT_TOKEN, TG_CHAT_ID
 // 상태: state.json (보낸 기사 키 목록) — 워크플로우가 커밋해 다음 실행에 이어짐
 import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
+import { loadDays, topIssues, formatRanking, kstDate } from "./insight.mjs";
 
 const KEYWORD = "부산";
 const MAX_PER_RUN = 30;          // 1회 실행당 최대 전송(폭주 방지)
@@ -106,6 +107,8 @@ function saveState() {
   writeFileSync(STATE_FILE, JSON.stringify({
     seen: [...seen].slice(-STATE_CAP),
     titles: [...seenTitles].slice(-STATE_CAP),
+    tgOffset: state.tgOffset || 0,
+    briefedFor: state.briefedFor || "",
     updated: new Date().toISOString(),
   }));
 }
@@ -165,6 +168,64 @@ async function runOnce() {
   saveState();
 }
 
+// ---- "TOP n" 명령 응답 (지정 채팅방에서 "TOP 10"이라고 치면 그 시점 이슈 순위표 회신) ----
+let tgOffset = state.tgOffset || 0;
+async function replyRanking(chatId, n, dates, headerLabel) {
+  const items = loadDays(dates);
+  if (!items.length) {
+    await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text: "아직 집계할 아카이브가 없습니다. (축적 시작 직후이거나 해당 날짜 데이터 없음)" }),
+    });
+    return;
+  }
+  const list = topIssues(items, n);
+  for (const msg of formatRanking(list, items.length, n, headerLabel)) {
+    await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: "HTML", disable_web_page_preview: true }),
+    });
+    await new Promise(r => setTimeout(r, 300));
+  }
+}
+async function pollCommands() {
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/getUpdates?offset=${tgOffset + 1}&timeout=0`);
+    const j = await r.json();
+    for (const u of j.result || []) {
+      tgOffset = u.update_id;
+      const m = u.message;
+      if (!m || !m.text) continue;
+      if (!CHAT_IDS.includes(String(m.chat.id))) continue;               // 지정된 방에서만
+      if (Date.now() / 1000 - m.date > 600) continue;                    // 10분 지난 메시지 무시
+      const mt = m.text.match(/(?:top|톱)\s*(\d{1,3})/i);
+      if (mt) {
+        const n = Math.min(100, Math.max(1, Number(mt[1])));
+        console.log(`명령 수신: TOP ${n}`);
+        await replyRanking(m.chat.id, n, [kstDate(0)], `오늘 부산 이슈 TOP ${n} — ${kstDate(0)} 현재`);
+      }
+    }
+    state.tgOffset = tgOffset;
+  } catch (e) { console.error("명령 확인 실패:", e.message); }
+}
+
+// ---- 아침 7시(KST = 22:00 UTC) 전날 TOP 10 브리핑 ----
+async function maybeMorningBrief() {
+  const now = new Date();
+  const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const today = kstDate(0);
+  if (utcMins < 22 * 60 || utcMins >= 23 * 60) return;                   // 22:00~22:59 UTC = 아침 7시대 KST
+  if (state.briefedFor === today) return;
+  state.briefedFor = today;
+  saveState();
+  const yesterday = kstDate(-1);
+  const d = new Date(today + "T12:00:00Z");
+  const days = ["일","월","화","수","목","금","토"];
+  for (const chat of CHAT_IDS)
+    await replyRanking(chat, 10, [yesterday], `☀️ ${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 이슈 TOP 10`);
+  console.log("☀️ 아침 브리핑 발송 완료");
+}
+
 // ---- 밤 10시 1분(KST=13:01 UTC) 정리보고 트리거 ----
 // GitHub 크론이 이 계정에서 발화하지 않는 문제 대응: 상시 도는 이 루프가 시계를 보고 직접 깨운다.
 // nightly.yml 쪽 가드가 당일 중복 실행을 걸러주므로 여러 번 쏘여도 안전.
@@ -193,9 +254,17 @@ if (intervalSec > 0 && durationMin > 0) {
   while (Date.now() < until) {
     try { await runOnce(); } catch (e) { console.error("폴링 오류:", e.message); }
     await maybeTriggerNightly();
+    await maybeMorningBrief();
     const remain = until - Date.now();
     if (remain <= intervalSec * 1000) break;
-    await new Promise(r2 => setTimeout(r2, intervalSec * 1000));
+    // 다음 뉴스 확인까지 대기하는 동안 20초마다 "TOP n" 명령 확인 (빠른 응답)
+    const waitEnd = Date.now() + intervalSec * 1000;
+    while (Date.now() < waitEnd - 500) {
+      await pollCommands();
+      const left = waitEnd - Date.now();
+      if (left <= 500) break;
+      await new Promise(r2 => setTimeout(r2, Math.min(20000, left)));
+    }
   }
   console.log("반복 종료");
 } else {
