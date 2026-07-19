@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 const KEYWORD = "부산";
-const MAX_PER_RUN = 15;          // 1회 실행당 최대 전송(폭주 방지)
+const MAX_PER_RUN = 30;          // 1회 실행당 최대 전송(폭주 방지)
 const FIRST_RUN_SEND = 5;        // 최초 실행 시엔 최신 5건만
 const STATE_FILE = "state.json";
 const STATE_CAP = 3000;          // 보관하는 기존 키 수
@@ -29,12 +29,16 @@ const PRESS = {
   "newspim.com":"뉴스핌","dailian.co.kr":"데일리안","newdaily.co.kr":"뉴데일리","wowtv.co.kr":"한국경제TV",
   "biz.chosun.com":"조선비즈","gukjenews.com":"국제뉴스","newsworks.co.kr":"뉴스웍스","kado.net":"강원도민일보",
 };
-function pressName(url) {
+// 통신사(중복 시 대표로 우선 선택)
+const WIRES = ["yna.co.kr", "newsis.com", "news1.kr", "yonhapnewstv.co.kr"];
+// 기계적 소음(날씨 묶음·운세·로또·부고·시황 등) — 본문매치 기사에만 적용
+const NOISE = /오늘의 날씨|날씨예보|\[날씨|운세|로또|\[?부고\]?|\[인사\]|주요 ?일정|코스피|코스닥|환율 마감|부동산 시황/;
+
+function pressInfo(url) {
   const host = String(url).replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
-  for (const [dom, name] of Object.entries(PRESS)) if (host.endsWith(dom.replace(/^.*?([^.]+\.[^.]+)$/, "$1")) && (host.includes(dom.split(".")[0]) || host === dom)) return name;
-  const exact = Object.keys(PRESS).find(d => host === d || host.endsWith("." + d) || d.endsWith(host));
-  if (exact) return PRESS[exact];
-  return host || "언론";
+  const dom = Object.keys(PRESS).find(d => host === d || host.endsWith("." + d) || d.endsWith(host));
+  if (dom) return { name: PRESS[dom], mapped: true, wire: WIRES.some(w => host === w || host.endsWith("." + w)) };
+  return { name: host || "언론", mapped: false, wire: false };
 }
 
 const strip = s => String(s).replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&apos;|&#39;/g, "'");
@@ -46,8 +50,10 @@ const keyOf = it => {
   // 쿼리스트링에 기사번호가 있는 CMS(articleView.html?idxno=)가 많으므로 쿼리는 보존, 프래그먼트만 제거
   return (it.originallink || it.link || "").replace(/^https?:\/\//, "").replace(/#.*$/, "").replace(/\/$/, "");
 };
-// 재전송(통신사 받아쓰기) 억제용 제목 정규화
-const normTitle = t => strip(t).replace(/[\[\](){}〈〉<>「」'"'"·…‥,.!?\s-]/g, "").slice(0, 30);
+// 재전송(통신사 받아쓰기) 억제용 제목 정규화 — 매체별 말머리([단독]·[속보] 등)를 떼고 비교
+const normTitle = t => strip(t)
+  .replace(/\[(단독|속보|포토|영상|종합|1보|2보|3보|기자수첩|현장|르포)\]/gi, "")
+  .replace(/[\[\](){}〈〉<>「」'"'"·…‥,.!?\s-]/g, "").slice(0, 30);
 
 // ---- 상태 로드 ----
 let state = { seen: [], titles: [] };
@@ -60,18 +66,34 @@ const firstRun = seen.size === 0;
 const naverH = { "X-NCP-APIGW-API-KEY-ID": NAVER_ID, "X-NCP-APIGW-API-KEY": NAVER_SECRET };
 const r = await fetch(`https://naverapihub.apigw.ntruss.com/search/v1/news?query=${encodeURIComponent(KEYWORD)}&display=100&start=1&sort=date`, { headers: naverH });
 const j = await r.json();
-const items = (j.items || []).filter(it => strip(it.title).includes(KEYWORD)); // 제목 매치만
+// 수집 범위: ①제목에 부산(전 매체) ②본문에만 부산(주요 매체=도메인맵 등재처, 소음성 제목 제외)
+const items = (j.items || []).filter(it => {
+  const titleHit = strip(it.title).includes(KEYWORD);
+  if (titleHit) return true;
+  const p = pressInfo(it.originallink || it.link);
+  return p.mapped && !NOISE.test(strip(it.title));
+});
 
-// 오래된 것부터 전송되도록 뒤집기
+// 오래된 것부터 처리(통신사가 대개 먼저 발행 → 자연스럽게 통신사 버전이 선점)
 items.reverse();
 
-const fresh = [];
+// 같은 제목 계열은 통신사 버전을 대표로 1건만 전송
+const groups = new Map();
 for (const it of items) {
   const k = keyOf(it);
+  if (seen.has(k)) continue;
   const nt = normTitle(it.title);
-  if (seen.has(k) || seenTitles.has(nt)) continue;
-  seen.add(k); seenTitles.add(nt);
-  fresh.push(it);
+  if (seenTitles.has(nt)) { seen.add(k); continue; }   // 이미 보낸 계열의 재전송
+  if (!groups.has(nt)) groups.set(nt, []);
+  groups.get(nt).push({ it, k });
+}
+const fresh = [];
+for (const [nt, grp] of groups) {
+  const wirePick = grp.find(g => pressInfo(g.it.originallink || g.it.link).wire);
+  const pick = wirePick || grp[0];
+  for (const g of grp) seen.add(g.k);
+  seenTitles.add(nt);
+  fresh.push(pick.it);
 }
 
 // ---- 전송 ----
@@ -86,14 +108,14 @@ async function send(text) {
 }
 
 const toSend = firstRun ? fresh.slice(-FIRST_RUN_SEND) : fresh.slice(-MAX_PER_RUN);
-console.log(`검색 ${items.length}건(제목매치) | 신규 ${fresh.length}건 | 전송 ${toSend.length}건${firstRun ? " (최초 실행: 최신 일부만)" : ""}`);
+console.log(`수집 ${items.length}건(제목 전매체+본문 주요매체) | 신규 ${fresh.length}건 | 전송 ${toSend.length}건${firstRun ? " (최초 실행: 최신 일부만)" : ""}`);
 
 for (const it of toSend) {
-  const name = pressName(it.originallink || it.link);
+  const { name } = pressInfo(it.originallink || it.link);
   const title = strip(it.title);
   const link = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
   const ctx = strip(it.description).slice(0, 300);
-  const msg = `📰 <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n<i>…${esc(ctx)}…</i>`;
+  const msg = `📰 <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
   await send(msg);
   await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
 }
