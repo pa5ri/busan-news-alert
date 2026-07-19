@@ -2,7 +2,7 @@
 // env: NAVER_ID, NAVER_SECRET (NAVER API HUB), TG_BOT_TOKEN, TG_CHAT_ID
 // 상태: state.json (보낸 기사 키 목록) — 워크플로우가 커밋해 다음 실행에 이어짐
 import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
-import { loadDays, topIssues, formatRanking, kstDate } from "./insight.mjs";
+import { loadDays, topIssues, formatRanking, articlesForLabel, kstDate } from "./insight.mjs";
 
 const KEYWORD = "부산";
 const MAX_PER_RUN = 30;          // 1회 실행당 최대 전송(폭주 방지)
@@ -175,23 +175,49 @@ async function runOnce() {
 
 // ---- "TOP n" 명령 응답 (지정 채팅방에서 "TOP 10"이라고 치면 그 시점 이슈 순위표 회신) ----
 let tgOffset = state.tgOffset || 0;
+const TG = (method, body) => fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/${method}`, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+// 콜백에 담을 이슈 라벨 (64바이트 제한 → UTF-8 기준 안전 절단)
+function labelToData(label) {
+  let s = "iss:" + label, b = Buffer.from(s, "utf8");
+  while (b.length > 60) { label = label.slice(0, -1); s = "iss:" + label; b = Buffer.from(s, "utf8"); }
+  return s;
+}
+// 이슈별 버튼(누르면 링크 모음) — 상위 12개까지 세로 배열
+function issueKeyboard(list) {
+  const rows = list.slice(0, 12).map((c, i) => [{ text: `${i + 1}. ${c.label} (${c.count})`, callback_data: labelToData(c.label) }]);
+  return rows.length ? { inline_keyboard: rows } : undefined;
+}
+
 async function replyRanking(chatId, n, dates, headerLabel) {
   const items = loadDays(dates);
   if (!items.length) {
-    await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: "아직 집계할 아카이브가 없습니다. (축적 시작 직후이거나 해당 날짜 데이터 없음)" }),
-    });
+    await TG("sendMessage", { chat_id: chatId, text: "아직 집계할 아카이브가 없습니다. (축적 시작 직후이거나 해당 날짜 데이터 없음)" });
     return;
   }
   const list = topIssues(items, n);
-  for (const msg of formatRanking(list, items.length, n, headerLabel)) {
-    await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: msg, parse_mode: "HTML", disable_web_page_preview: true }),
-    });
+  const msgs = formatRanking(list, items.length, n, headerLabel);
+  for (let i = 0; i < msgs.length; i++) {
+    const body = { chat_id: chatId, text: msgs[i], parse_mode: "HTML", disable_web_page_preview: true };
+    if (i === msgs.length - 1) {                          // 버튼은 마지막 메시지에 부착
+      const kb = issueKeyboard(list);
+      if (kb) { body.reply_markup = kb; body.text += "\n\n👇 이슈를 누르면 관련 기사 링크가 옵니다"; }
+    }
+    await TG("sendMessage", body);
     await new Promise(r => setTimeout(r, 300));
   }
+}
+
+// 버튼 클릭 → 그 이슈의 기사 링크 모음 회신
+async function replyIssueLinks(chatId, label) {
+  const arts = articlesForLabel(loadDays([kstDate(0)]), label).slice(0, 15);
+  if (!arts.length) { await TG("sendMessage", { chat_id: chatId, text: `"${label}" 관련 기사를 찾지 못했습니다.` }); return; }
+  const lines = arts.map((a, i) => `${i + 1}. <b>[${esc(a.src || "")}]</b> ${esc(String(a.t).slice(0, 55))}\n${a.url}`);
+  await TG("sendMessage", {
+    chat_id: chatId, parse_mode: "HTML", disable_web_page_preview: true,
+    text: `🔗 <b>${esc(label)}</b> 관련 기사 ${arts.length}건\n\n${lines.join("\n\n")}`,
+  });
 }
 async function pollCommands() {
   try {
@@ -199,6 +225,18 @@ async function pollCommands() {
     const j = await r.json();
     for (const u of j.result || []) {
       tgOffset = u.update_id;
+      // 버튼 클릭(콜백) 처리
+      if (u.callback_query) {
+        const cq = u.callback_query;
+        await TG("answerCallbackQuery", { callback_query_id: cq.id });   // 로딩 스피너 종료
+        const chatId = cq.message?.chat?.id;
+        if (chatId && CHAT_IDS.includes(String(chatId)) && (cq.data || "").startsWith("iss:")) {
+          const label = cq.data.slice(4);
+          console.log(`버튼: ${label}`);
+          await replyIssueLinks(chatId, label);
+        }
+        continue;
+      }
       const m = u.message;
       if (!m || !m.text) continue;
       if (!CHAT_IDS.includes(String(m.chat.id))) continue;               // 지정된 방에서만

@@ -18,6 +18,8 @@ function normToken(w) {
     if (w.length > j.length + 1 && w.endsWith(j)) { w = w.slice(0, -j.length); break; }
   }
   if (w.length < 2 || STOP.has(w)) return null;
+  // 동사/형용사 활용형 파편 제거 (예: 대화하는→대화하, 참석한→참석) — 어간이 이런 어미로 끝나면 이슈어로 부적합
+  if (/(하|되|해|드|르|았|었|였|는|던|린|은|운|같|없|있)$/.test(w)) return null;
   return w;
 }
 
@@ -102,6 +104,22 @@ export function formatRanking(list, total, n, headerLabel) {
   }
   msgs.push(cur);
   return msgs;
+}
+
+// 특정 이슈(라벨)에 해당하는 기사들 — 제목이 라벨의 모든 어절을 포함하면 매칭, 최신순
+export function articlesForLabel(items, label) {
+  const parts = String(label).split(/\s+/).filter(Boolean);
+  const seen = new Set(), out = [];
+  for (const it of items) {
+    const t = String(it.t || "");
+    if (!parts.every(p => t.includes(p))) continue;
+    const key = (it.url || t).replace(/[?#].*$/, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
+  }
+  out.sort((a, b) => new Date(b.pub || 0) - new Date(a.pub || 0));
+  return out;
 }
 
 export const kstDate = (offsetDays = 0) =>
