@@ -1,7 +1,7 @@
 // 부산 뉴스속보 알리미 — 네이버 뉴스 검색(제목에 '부산' 포함)을 폴링해 새 기사를 텔레그램으로 전송
 // env: NAVER_ID, NAVER_SECRET (NAVER API HUB), TG_BOT_TOKEN, TG_CHAT_ID
 // 상태: state.json (보낸 기사 키 목록) — 워크플로우가 커밋해 다음 실행에 이어짐
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 
 const KEYWORD = "부산";
 const MAX_PER_RUN = 30;          // 1회 실행당 최대 전송(폭주 방지)
@@ -86,6 +86,22 @@ async function send(text) {
   return ok;
 }
 
+// ---- 아카이브 (인사이트 분석용 축적 — archive/YYYY-MM-DD.jsonl, KST 날짜 기준) ----
+function archive(it, pressName) {
+  try {
+    const kst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    mkdirSync("archive", { recursive: true });
+    const strip2 = s => String(s).replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+    appendFileSync(`archive/${kst}.jsonl`, JSON.stringify({
+      t: strip2(it.title),                       // 제목
+      src: pressName,                            // 매체
+      pub: it.pubDate,                           // 발행 시각
+      url: it.originallink || it.link,           // 원문
+      ctx: strip2(it.description).slice(0, 200), // 키워드 맥락
+    }) + "\n");
+  } catch (e) { console.error("아카이브 실패:", e.message); }
+}
+
 function saveState() {
   writeFileSync(STATE_FILE, JSON.stringify({
     seen: [...seen].slice(-STATE_CAP),
@@ -139,6 +155,7 @@ async function runOnce() {
     const ctx = strip(it.description).slice(0, 300);
     const msg = `📰 <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
     await send(msg);
+    archive(it, name);
     await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
   }
   if (!firstRun && fresh.length > MAX_PER_RUN)
