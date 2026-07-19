@@ -71,14 +71,19 @@ let firstRun = seen.size === 0;
 
 const naverH = { "X-NCP-APIGW-API-KEY-ID": NAVER_ID, "X-NCP-APIGW-API-KEY": NAVER_SECRET };
 
+// 쉼표로 여러 방 지정 가능: "8268488349,-5514645704" (개인+그룹)
+const CHAT_IDS = String(TG_CHAT_ID).split(",").map(s => s.trim()).filter(Boolean);
 async function send(text) {
-  const res = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: TG_CHAT_ID, text, parse_mode: "HTML" }), // 미리보기 카드 유지
-  });
-  const jj = await res.json();
-  if (!jj.ok) console.error("전송 실패:", JSON.stringify(jj).slice(0, 200));
-  return jj.ok;
+  let ok = true;
+  for (const chat of CHAT_IDS) {
+    const res = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML" }), // 미리보기 카드 유지
+    });
+    const jj = await res.json();
+    if (!jj.ok) { console.error(`전송 실패(${chat}):`, JSON.stringify(jj).slice(0, 200)); ok = false; }
+  }
+  return ok;
 }
 
 function saveState() {
