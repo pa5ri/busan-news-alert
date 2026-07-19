@@ -2,7 +2,9 @@ name: 부산 뉴스속보 (2분 폴링)
 
 on:
   schedule:
-    - cron: "0 * * * *"    # 매시 정각에 시작 → 작업 내부에서 2분 간격으로 58분간 반복
+    # 15분마다 기상 시도 — GitHub 크론은 자주 미발화되므로 여러 번 시도해 하나만 걸려도
+    # concurrency 대기열을 통해 직전 58분 루프가 끝나는 즉시 다음 루프가 이어짐
+    - cron: "*/15 * * * *"
   workflow_dispatch: {}
 
 concurrency:
