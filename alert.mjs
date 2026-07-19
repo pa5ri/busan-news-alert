@@ -139,18 +139,23 @@ async function runOnce() {
     if (!groups.has(nt)) groups.set(nt, []);
     groups.get(nt).push({ it, k });
   }
-  const fresh = [];
+  const freshGroups = [];
   for (const [nt, grp] of groups) {
     const wirePick = grp.find(g => pressInfo(g.it.originallink || g.it.link).wire);
-    const pick = wirePick || grp[0];
-    for (const g of grp) seen.add(g.k);
-    seenTitles.add(nt);
-    fresh.push(pick.it);
+    freshGroups.push({ nt, grp, pick: (wirePick || grp[0]).it });
   }
 
-  const toSend = firstRun ? fresh.slice(-FIRST_RUN_SEND) : fresh.slice(-MAX_PER_RUN);
-  console.log(`[${new Date().toISOString().slice(11,19)}] 수집 ${items.length} | 신규 ${fresh.length} | 전송 ${toSend.length}${firstRun ? " (최초 실행)" : ""}`);
+  // 회차당 상한 초과분은 버리지 않고 '미표시'로 남겨 다음 회차(2분 뒤)에 이어서 전송 (이월)
+  const sendGroups = firstRun ? freshGroups.slice(-FIRST_RUN_SEND) : freshGroups.slice(0, MAX_PER_RUN);
+  const markGroups = firstRun ? freshGroups : sendGroups;   // 최초 실행은 과거 백로그 전체를 본 것으로 처리
+  for (const { nt, grp } of markGroups) {
+    for (const g of grp) seen.add(g.k);
+    seenTitles.add(nt);
+  }
+  const carry = freshGroups.length - sendGroups.length;
+  console.log(`[${new Date().toISOString().slice(11,19)}] 수집 ${items.length} | 신규 ${freshGroups.length} | 전송 ${sendGroups.length}${carry > 0 && !firstRun ? ` | 이월 ${carry}` : ""}${firstRun ? " (최초 실행)" : ""}`);
 
+  const toSend = sendGroups.map(sg => sg.pick);
   for (const it of toSend) {
     const { name } = pressInfo(it.originallink || it.link);
     const title = strip(it.title);
@@ -161,8 +166,8 @@ async function runOnce() {
     archive(it, name);
     await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
   }
-  if (!firstRun && fresh.length > MAX_PER_RUN)
-    await send(`⚠ 이번 회차 신규 ${fresh.length}건 중 ${MAX_PER_RUN}건만 전송(폭주 방지).`);
+  if (!firstRun && carry > 0)
+    await send(`⏳ 신규 ${freshGroups.length}건 중 ${sendGroups.length}건 전송 — 나머지 ${carry}건은 2분 뒤 이어서 전송됩니다.`);
 
   firstRun = false;
   saveState();
