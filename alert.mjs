@@ -67,44 +67,10 @@ let state = { seen: [], titles: [] };
 if (existsSync(STATE_FILE)) { try { state = JSON.parse(readFileSync(STATE_FILE, "utf8")); } catch {} }
 const seen = new Set(state.seen || []);
 const seenTitles = new Set(state.titles || []);
-const firstRun = seen.size === 0;
+let firstRun = seen.size === 0;
 
-// ---- 네이버 검색 ----
 const naverH = { "X-NCP-APIGW-API-KEY-ID": NAVER_ID, "X-NCP-APIGW-API-KEY": NAVER_SECRET };
-const r = await fetch(`https://naverapihub.apigw.ntruss.com/search/v1/news?query=${encodeURIComponent(KEYWORD)}&display=100&start=1&sort=date`, { headers: naverH });
-const j = await r.json();
-// 수집 범위: ①제목에 부산(전 매체) ②본문에만 부산(주요 매체=도메인맵 등재처, 소음성 제목 제외)
-const items = (j.items || []).filter(it => {
-  if (isEnt(it)) return false;                       // 연예 카테고리 제외
-  const titleHit = strip(it.title).includes(KEYWORD);
-  if (titleHit) return true;
-  const p = pressInfo(it.originallink || it.link);
-  return p.mapped && !NOISE.test(strip(it.title));
-});
 
-// 오래된 것부터 처리(통신사가 대개 먼저 발행 → 자연스럽게 통신사 버전이 선점)
-items.reverse();
-
-// 같은 제목 계열은 통신사 버전을 대표로 1건만 전송
-const groups = new Map();
-for (const it of items) {
-  const k = keyOf(it);
-  if (seen.has(k)) continue;
-  const nt = normTitle(it.title);
-  if (seenTitles.has(nt)) { seen.add(k); continue; }   // 이미 보낸 계열의 재전송
-  if (!groups.has(nt)) groups.set(nt, []);
-  groups.get(nt).push({ it, k });
-}
-const fresh = [];
-for (const [nt, grp] of groups) {
-  const wirePick = grp.find(g => pressInfo(g.it.originallink || g.it.link).wire);
-  const pick = wirePick || grp[0];
-  for (const g of grp) seen.add(g.k);
-  seenTitles.add(nt);
-  fresh.push(pick.it);
-}
-
-// ---- 전송 ----
 async function send(text) {
   const res = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -115,25 +81,82 @@ async function send(text) {
   return jj.ok;
 }
 
-const toSend = firstRun ? fresh.slice(-FIRST_RUN_SEND) : fresh.slice(-MAX_PER_RUN);
-console.log(`수집 ${items.length}건(제목 전매체+본문 주요매체) | 신규 ${fresh.length}건 | 전송 ${toSend.length}건${firstRun ? " (최초 실행: 최신 일부만)" : ""}`);
-
-for (const it of toSend) {
-  const { name } = pressInfo(it.originallink || it.link);
-  const title = strip(it.title);
-  const link = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
-  const ctx = strip(it.description).slice(0, 300);
-  const msg = `📰 <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
-  await send(msg);
-  await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
+function saveState() {
+  writeFileSync(STATE_FILE, JSON.stringify({
+    seen: [...seen].slice(-STATE_CAP),
+    titles: [...seenTitles].slice(-STATE_CAP),
+    updated: new Date().toISOString(),
+  }));
 }
-if (!firstRun && fresh.length > MAX_PER_RUN)
-  await send(`⚠ 이번 회차 신규 ${fresh.length}건 중 ${MAX_PER_RUN}건만 전송(폭주 방지). 나머지는 생략됨.`);
 
-// ---- 상태 저장 ----
-writeFileSync(STATE_FILE, JSON.stringify({
-  seen: [...seen].slice(-STATE_CAP),
-  titles: [...seenTitles].slice(-STATE_CAP),
-  updated: new Date().toISOString(),
-}));
-console.log("상태 저장 완료");
+// ---- 1회 폴링 ----
+async function runOnce() {
+  const r = await fetch(`https://naverapihub.apigw.ntruss.com/search/v1/news?query=${encodeURIComponent(KEYWORD)}&display=100&start=1&sort=date`, { headers: naverH });
+  const j = await r.json();
+  // 수집 범위: ①제목에 부산(전 매체) ②본문에만 부산(주요 매체=도메인맵 등재처, 소음성 제목 제외)
+  const items = (j.items || []).filter(it => {
+    if (isEnt(it)) return false;                       // 연예 카테고리 제외
+    const titleHit = strip(it.title).includes(KEYWORD);
+    if (titleHit) return true;
+    const p = pressInfo(it.originallink || it.link);
+    return p.mapped && !NOISE.test(strip(it.title));
+  });
+
+  // 오래된 것부터 처리(통신사가 대개 먼저 발행 → 자연스럽게 통신사 버전이 선점)
+  items.reverse();
+
+  // 같은 제목 계열은 통신사 버전을 대표로 1건만 전송
+  const groups = new Map();
+  for (const it of items) {
+    const k = keyOf(it);
+    if (seen.has(k)) continue;
+    const nt = normTitle(it.title);
+    if (seenTitles.has(nt)) { seen.add(k); continue; }   // 이미 보낸 계열의 재전송
+    if (!groups.has(nt)) groups.set(nt, []);
+    groups.get(nt).push({ it, k });
+  }
+  const fresh = [];
+  for (const [nt, grp] of groups) {
+    const wirePick = grp.find(g => pressInfo(g.it.originallink || g.it.link).wire);
+    const pick = wirePick || grp[0];
+    for (const g of grp) seen.add(g.k);
+    seenTitles.add(nt);
+    fresh.push(pick.it);
+  }
+
+  const toSend = firstRun ? fresh.slice(-FIRST_RUN_SEND) : fresh.slice(-MAX_PER_RUN);
+  console.log(`[${new Date().toISOString().slice(11,19)}] 수집 ${items.length} | 신규 ${fresh.length} | 전송 ${toSend.length}${firstRun ? " (최초 실행)" : ""}`);
+
+  for (const it of toSend) {
+    const { name } = pressInfo(it.originallink || it.link);
+    const title = strip(it.title);
+    const link = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
+    const ctx = strip(it.description).slice(0, 300);
+    const msg = `📰 <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
+    await send(msg);
+    await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
+  }
+  if (!firstRun && fresh.length > MAX_PER_RUN)
+    await send(`⚠ 이번 회차 신규 ${fresh.length}건 중 ${MAX_PER_RUN}건만 전송(폭주 방지).`);
+
+  firstRun = false;
+  saveState();
+}
+
+// ---- 실행: 단발 또는 반복 모드 ----
+// POLL_INTERVAL_SEC(기본 0=1회 실행), POLL_DURATION_MIN(반복 총 시간)
+const intervalSec = Number(process.env.POLL_INTERVAL_SEC || 0);
+const durationMin = Number(process.env.POLL_DURATION_MIN || 0);
+if (intervalSec > 0 && durationMin > 0) {
+  const until = Date.now() + durationMin * 60 * 1000;
+  console.log(`반복 모드: ${intervalSec}초 간격, ${durationMin}분간`);
+  while (Date.now() < until) {
+    try { await runOnce(); } catch (e) { console.error("폴링 오류:", e.message); }
+    const remain = until - Date.now();
+    if (remain <= intervalSec * 1000) break;
+    await new Promise(r2 => setTimeout(r2, intervalSec * 1000));
+  }
+  console.log("반복 종료");
+} else {
+  await runOnce();
+}

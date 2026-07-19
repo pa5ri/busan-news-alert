@@ -1,8 +1,8 @@
-name: 부산 뉴스속보 (5분 주기)
+name: 부산 뉴스속보 (2분 폴링)
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # 5분마다 (GitHub 사정으로 수 분 지연될 수 있음)
+    - cron: "0 * * * *"    # 매시 정각에 시작 → 작업 내부에서 2분 간격으로 58분간 반복
   workflow_dispatch: {}
 
 concurrency:
@@ -15,22 +15,27 @@ permissions:
 jobs:
   poll:
     runs-on: ubuntu-latest
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: 새 기사 확인 및 전송
+      - name: 2분 간격 폴링 (58분간)
         env:
           NAVER_ID: ${{ secrets.NAVER_ID }}
           NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          POLL_INTERVAL_SEC: "120"
+          POLL_DURATION_MIN: "58"
         run: node alert.mjs
       - name: 상태 저장(커밋)
+        if: always()
         run: |
           git config user.name "busan-alert-bot"
           git config user.email "actions@users.noreply.github.com"
+          git pull --rebase -X ours || true
           git add state.json
           git diff --cached --quiet || git commit -m "state update [skip ci]"
-          git push
+          git push || true
