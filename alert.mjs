@@ -43,7 +43,8 @@ const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(
 const keyOf = it => {
   const nv = (it.link || "").match(/article\/(?:mnews\/)?(\d+\/\d+)/);
   if (nv) return "nv:" + nv[1];
-  return (it.originallink || it.link || "").replace(/^https?:\/\//, "").replace(/[?#].*$/, "").replace(/\/$/, "");
+  // 쿼리스트링에 기사번호가 있는 CMS(articleView.html?idxno=)가 많으므로 쿼리는 보존, 프래그먼트만 제거
+  return (it.originallink || it.link || "").replace(/^https?:\/\//, "").replace(/#.*$/, "").replace(/\/$/, "");
 };
 // 재전송(통신사 받아쓰기) 억제용 제목 정규화
 const normTitle = t => strip(t).replace(/[\[\](){}〈〉<>「」'"'"·…‥,.!?\s-]/g, "").slice(0, 30);
@@ -92,8 +93,6 @@ for (const it of toSend) {
   const title = strip(it.title);
   const link = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
   const ctx = strip(it.description).slice(0, 300);
-  const t = new Date(it.pubDate);
-  const hhmm = `${String(t.getUTCHours() + 9).padStart(2, "0").replace(/^2[4-9]|3\d/, m => String(m - 24).padStart(2, "0"))}:${String(t.getUTCMinutes()).padStart(2, "0")}`;
   const msg = `📰 <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n<i>…${esc(ctx)}…</i>`;
   await send(msg);
   await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
