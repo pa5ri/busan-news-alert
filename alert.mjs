@@ -33,6 +33,13 @@ const PRESS = {
 const WIRES = ["yna.co.kr", "newsis.com", "news1.kr", "yonhapnewstv.co.kr"];
 // 기계적 소음(날씨 묶음·운세·로또·부고·시황 등) — 본문매치 기사에만 적용
 const NOISE = /오늘의 날씨|날씨예보|\[날씨|운세|로또|\[?부고\]?|\[인사\]|주요 ?일정|코스피|코스닥|환율 마감|부동산 시황/;
+// 연예 카테고리 제외: 네이버 연예판 링크·연예 섹션코드(sid=106)·연예 전문매체
+const ENT_LINK = /entertain\.naver\.com|[?&]sid=106\b/;
+const ENT_DOMAINS = ["osen.co.kr","xportsnews.com","topstarnews.net","starnewskorea.com","mydaily.co.kr",
+  "tenasia.co.kr","newsen.com","celuvmedia.com","bntnews.co.kr","tvreport.co.kr","spotvnews.co.kr",
+  "joynews24.com","sportschosun.com","sportsseoul.com","sportsw.kr","stardailynews.co.kr","topdaily.co.kr"];
+const isEnt = it => ENT_LINK.test(it.link || "") ||
+  ENT_DOMAINS.some(d => { const h = String(it.originallink||"").replace(/^https?:\/\/(www\.)?/,"").split("/")[0]; return h === d || h.endsWith("." + d); });
 
 function pressInfo(url) {
   const host = String(url).replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0];
@@ -68,6 +75,7 @@ const r = await fetch(`https://naverapihub.apigw.ntruss.com/search/v1/news?query
 const j = await r.json();
 // 수집 범위: ①제목에 부산(전 매체) ②본문에만 부산(주요 매체=도메인맵 등재처, 소음성 제목 제외)
 const items = (j.items || []).filter(it => {
+  if (isEnt(it)) return false;                       // 연예 카테고리 제외
   const titleHit = strip(it.title).includes(KEYWORD);
   if (titleHit) return true;
   const p = pressInfo(it.originallink || it.link);
