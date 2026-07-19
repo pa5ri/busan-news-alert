@@ -1,0 +1,36 @@
+name: 부산 뉴스속보 (5분 주기)
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # 5분마다 (GitHub 사정으로 수 분 지연될 수 있음)
+  workflow_dispatch: {}
+
+concurrency:
+  group: alert
+  cancel-in-progress: false
+
+permissions:
+  contents: write            # state.json 커밋용
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 새 기사 확인 및 전송
+        env:
+          NAVER_ID: ${{ secrets.NAVER_ID }}
+          NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: node alert.mjs
+      - name: 상태 저장(커밋)
+        run: |
+          git config user.name "busan-alert-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || git commit -m "state update [skip ci]"
+          git push
