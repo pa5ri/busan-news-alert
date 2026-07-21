@@ -115,10 +115,17 @@ function saveState() {
     updated: new Date().toISOString(),
   }));
 }
-// 조례 알림 전송 (미리보기 끔 — 긴 본문형)
+// 조례 알림 전송 — 전용 봇(TG_ORD_TOKEN)으로 발송해 조례 정보만 따로 쌓이게 함
+const ORD_TOKEN = process.env.TG_ORD_TOKEN || TG_BOT_TOKEN;
 async function sendOrd(text) {
-  for (const chat of CHAT_IDS)
-    await TG("sendMessage", { chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true });
+  for (const chat of CHAT_IDS) {
+    const r = await fetch(`https://api.telegram.org/bot${ORD_TOKEN}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }),
+    });
+    const j = await r.json();
+    if (!j.ok) console.error("조례 전송 실패:", JSON.stringify(j).slice(0, 150));
+  }
 }
 
 // ---- 1회 폴링 ----

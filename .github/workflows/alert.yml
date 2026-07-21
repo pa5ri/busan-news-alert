@@ -29,6 +29,7 @@ jobs:
           NAVER_ID: ${{ secrets.NAVER_ID }}
           NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_ORD_TOKEN: ${{ secrets.TG_ORD_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           POLL_INTERVAL_SEC: "120"
           POLL_DURATION_MIN: "58"
