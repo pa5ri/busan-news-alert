@@ -22,6 +22,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: 의존성 설치
+        run: npm ci --no-audit --no-fund
       - name: 2분 간격 폴링 (58분간)
         env:
           NAVER_ID: ${{ secrets.NAVER_ID }}

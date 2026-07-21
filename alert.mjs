@@ -3,6 +3,7 @@
 // 상태: state.json (보낸 기사 키 목록) — 워크플로우가 커밋해 다음 실행에 이어짐
 import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { loadDays, topIssues, formatRanking, articlesForLabel, kstDate } from "./insight.mjs";
+import { checkOrdinances } from "./ordinance.mjs";
 
 const KEYWORD = "부산";
 const MAX_PER_RUN = 30;          // 1회 실행당 최대 전송(폭주 방지)
@@ -109,8 +110,15 @@ function saveState() {
     titles: [...seenTitles].slice(-STATE_CAP),
     tgOffset: state.tgOffset || 0,
     briefedFor: state.briefedFor || "",
+    ordSno: state.ordSno || 0,
+    ordBill: state.ordBill || 0,
     updated: new Date().toISOString(),
   }));
+}
+// 조례 알림 전송 (미리보기 끔 — 긴 본문형)
+async function sendOrd(text) {
+  for (const chat of CHAT_IDS)
+    await TG("sendMessage", { chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true });
 }
 
 // ---- 1회 폴링 ----
@@ -294,10 +302,17 @@ const durationMin = Number(process.env.POLL_DURATION_MIN || 0);
 if (intervalSec > 0 && durationMin > 0) {
   const until = Date.now() + durationMin * 60 * 1000;
   console.log(`반복 모드: ${intervalSec}초 간격, ${durationMin}분간`);
+  let lastOrdCheck = 0;
   while (Date.now() < until) {
     try { await runOnce(); } catch (e) { console.error("폴링 오류:", e.message); }
     await maybeTriggerNightly();
     await maybeMorningBrief();
+    // 부산시의회 조례안(입법예고·의안접수) — 1시간에 1번 확인
+    if (Date.now() - lastOrdCheck > 55 * 60 * 1000) {
+      lastOrdCheck = Date.now();
+      await checkOrdinances(state, sendOrd);
+      saveState();
+    }
     const remain = until - Date.now();
     if (remain <= intervalSec * 1000) break;
     // 다음 뉴스 확인까지 대기하는 동안 20초마다 "TOP n" 명령 확인 (빠른 응답)
