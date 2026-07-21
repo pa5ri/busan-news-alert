@@ -104,18 +104,21 @@ async function checkBills(state, send) {
     .map(m => ({ sid: Number(m[1]), title: m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() }));
   if (!bills.length) return;
   const known = state.ordBill || 0;
-  const firstRun = known === 0;
   const fresh = bills.filter(b => b.sid > known).sort((a, b) => a.sid - b.sid);
   state.ordBill = Math.max(known, ...bills.map(b => b.sid));
-  if (firstRun) return;                                     // 최초엔 기준점만 설정
-  for (const b of fresh.slice(0, 8)) {
+  // 전용봇 첫 가동 시 최근 2건을 형식 샘플로 발송
+  let targets = fresh.slice(0, 8);
+  if (!state.ordBillSampled) {
+    state.ordBillSampled = true;
+    if (!targets.length) targets = bills.sort((a, b) => b.sid - a.sid).slice(0, 2).reverse();
+  }
+  for (const b of targets) {
     const viewUrl = `http://council.busan.go.kr/assem/user/assem/bill/view.busan?menuCd=${BILL_MENU}&billSid=${b.sid}`;
     try {
       const detail = await get(viewUrl);
       const body = stripHtml(detail);
       const pick = re => (body.match(re) || [])[1]?.trim() || "";
-      const kind = pick(/의안종류\s*\n\s*([^\n]+)/);
-      if (!/조례/.test(kind)) continue;                     // 조례안만
+      const kind = pick(/의안종류\s*\n\s*([^\n]+)/);       // 조례안·동의안·결의안 등 전 종류
       const no = pick(/의안번호\s*\n\s*([^\n]+)/);
       const date = pick(/제안일자\s*\n\s*([^\n]+)/);
       const proposer = pick(/제안자\s*\n\s*([^\n]+)/);
@@ -125,8 +128,8 @@ async function checkBills(state, send) {
       const fm = detail.match(/href="(\/assem\/cms\/assem\/bill\/downloadfile\.busan\?[^"]+)"/);
       if (fm) reason = sectionOf(await hwpPreview("http://council.busan.go.kr" + fm[1].replace(/&amp;/g, "&")), 1600);
       const lines = [
-        `📥 <b>[부산시의회 의안접수]</b>`,
-        `<b>${esc(b.title)}</b>${no ? ` [${esc(no)}]` : ""}`,
+        `📥 <b>[부산시의회 의안접수${kind ? "·" + esc(kind) : ""}]</b>`,
+        `<b>${esc(b.title)}</b>${no ? ` [의안번호 ${esc(no)}]` : ""}`,
         ``,
         `📅 ${esc(date || "-")}   👤 ${esc(proposer || "-")}`,
         committee ? `🏛 ${esc(committee)}` : "",
@@ -139,7 +142,8 @@ async function checkBills(state, send) {
   }
 }
 
-export async function checkOrdinances(state, send) {
-  try { await checkLawmaking(state, send); } catch (e) { console.error("입법예고 확인 실패:", e.message); }
-  try { await checkBills(state, send); } catch (e) { console.error("의안접수 확인 실패:", e.message); }
+// sendLaw = 입법예고 봇, sendBill = 의안정보 봇 (분리 운영)
+export async function checkOrdinances(state, sendLaw, sendBill) {
+  try { await checkLawmaking(state, sendLaw); } catch (e) { console.error("입법예고 확인 실패:", e.message); }
+  try { await checkBills(state, sendBill || sendLaw); } catch (e) { console.error("의안접수 확인 실패:", e.message); }
 }

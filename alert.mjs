@@ -112,21 +112,25 @@ function saveState() {
     briefedFor: state.briefedFor || "",
     ordSno: state.ordSno || 0,
     ordBill: state.ordBill || 0,
+    ordBillSampled: state.ordBillSampled || false,
     updated: new Date().toISOString(),
   }));
 }
-// 조례 알림 전송 — 전용 봇(TG_ORD_TOKEN)으로 발송해 조례 정보만 따로 쌓이게 함
+// 의정 알림 전송 — 입법예고 봇(TG_ORD_TOKEN)·의안정보 봇(TG_BILL_TOKEN) 분리 운영
 const ORD_TOKEN = process.env.TG_ORD_TOKEN || TG_BOT_TOKEN;
-async function sendOrd(text) {
+const BILL_TOKEN = process.env.TG_BILL_TOKEN || ORD_TOKEN;
+const sendVia = token => async text => {
   for (const chat of CHAT_IDS) {
-    const r = await fetch(`https://api.telegram.org/bot${ORD_TOKEN}/sendMessage`, {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }),
     });
     const j = await r.json();
-    if (!j.ok) console.error("조례 전송 실패:", JSON.stringify(j).slice(0, 150));
+    if (!j.ok) console.error("의정 전송 실패:", JSON.stringify(j).slice(0, 150));
   }
-}
+};
+const sendLaw = sendVia(ORD_TOKEN);
+const sendBill = sendVia(BILL_TOKEN);
 
 // ---- 1회 폴링 ----
 async function runOnce() {
@@ -317,7 +321,7 @@ if (intervalSec > 0 && durationMin > 0) {
     // 부산시의회 조례안(입법예고·의안접수) — 1시간에 1번 확인
     if (Date.now() - lastOrdCheck > 55 * 60 * 1000) {
       lastOrdCheck = Date.now();
-      await checkOrdinances(state, sendOrd);
+      await checkOrdinances(state, sendLaw, sendBill);
       saveState();
     }
     const remain = until - Date.now();
