@@ -19,9 +19,9 @@ async function get(url) {
 }
 async function getBuf(url) {
   const ac = new AbortController();
-  const to = setTimeout(() => ac.abort(), 30000);
+  const to = setTimeout(() => ac.abort(), 90000);            // 의안 원문이 수 MB인 경우 대비
   try {
-    const r = await fetch(url, { headers: { "User-Agent": UA }, signal: ac.signal });
+    const r = await fetch(encodeURI(url), { headers: { "User-Agent": UA }, signal: ac.signal });
     return Buffer.from(await r.arrayBuffer());
   } finally { clearTimeout(to); }
 }
@@ -99,7 +99,7 @@ async function checkLawmaking(state, send) {
 // ── ② 의안접수 (의안정보시스템, 조례안만) ──
 const BILL_MENU = "DOM_000000103008000000";
 async function checkBills(state, send) {
-  const html = await get(`http://council.busan.go.kr/assem/index.busan?menuCd=${BILL_MENU}`);
+  const html = await get(`https://council.busan.go.kr/assem/index.busan?menuCd=${BILL_MENU}`);
   const bills = [...html.matchAll(/href="\/assem\/user\/assem\/bill\/view\.busan\?[^"]*billSid=(\d+)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi)]
     .map(m => ({ sid: Number(m[1]), title: m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() }));
   if (!bills.length) return;
@@ -113,7 +113,7 @@ async function checkBills(state, send) {
     if (!targets.length) targets = bills.sort((a, b) => b.sid - a.sid).slice(0, 2).reverse();
   }
   for (const b of targets) {
-    const viewUrl = `http://council.busan.go.kr/assem/user/assem/bill/view.busan?menuCd=${BILL_MENU}&billSid=${b.sid}`;
+    const viewUrl = `https://council.busan.go.kr/assem/user/assem/bill/view.busan?menuCd=${BILL_MENU}&billSid=${b.sid}`;
     try {
       const detail = await get(viewUrl);
       const body = stripHtml(detail);
@@ -121,12 +121,24 @@ async function checkBills(state, send) {
       const kind = pick(/의안종류\s*\n\s*([^\n]+)/);       // 조례안·동의안·결의안 등 전 종류
       const no = pick(/의안번호\s*\n\s*([^\n]+)/);
       const date = pick(/제안일자\s*\n\s*([^\n]+)/);
-      const proposer = pick(/제안자\s*\n\s*([^\n]+)/);
+      let proposer = pick(/제안자\s*\n\s*([^\n]+)/);
+      if (/^\(?\s*시\s*장\s*\)?$/.test(proposer)) proposer = "부산광역시장";
       const committee = pick(/소관위원회\s*:?\s*\n?\s*([^\n]+)/);
-      // 원문 첨부에서 제안이유 추출
+      // 세부내용 확보: ① 첨부(HWP/HWPX) 미리보기 → ② 페이지의 제안요지 필드 → ③ 원문 바로보기 안내
       let reason = "";
       const fm = detail.match(/href="(\/assem\/cms\/assem\/bill\/downloadfile\.busan\?[^"]+)"/);
-      if (fm) reason = sectionOf(await hwpPreview("http://council.busan.go.kr" + fm[1].replace(/&amp;/g, "&")), 1600);
+      if (fm) reason = sectionOf(await hwpPreview("https://council.busan.go.kr" + fm[1].replace(/&amp;/g, "&")), 1600);
+      if (!reason) {
+        const jeji = pick(/제안요지\s*\n\s*([^\n]{10,})/);
+        if (jeji) reason = jeji.slice(0, 1600);
+      }
+      let viewerNote = "";
+      if (!reason) {
+        const vm = detail.match(/href="(\/assem\/index\.busan\?contentsSid=\d+&(?:amp;)?filemask=[^"]+)"/);
+        viewerNote = vm
+          ? `📎 세부내용은 원문 참조: https://council.busan.go.kr${vm[1].replace(/&amp;/g, "&")}`
+          : `📎 세부내용은 상세 페이지의 첨부 원문 참조`;
+      }
       const lines = [
         `📥 <b>[부산시의회 의안접수${kind ? "·" + esc(kind) : ""}]</b>`,
         `<b>${esc(b.title)}</b>${no ? ` [의안번호 ${esc(no)}]` : ""}`,
@@ -134,6 +146,7 @@ async function checkBills(state, send) {
         `📅 ${esc(date || "-")}   👤 ${esc(proposer || "-")}`,
         committee ? `🏛 ${esc(committee)}` : "",
         reason ? `\n${esc(reason)}` : "",
+        viewerNote ? `\n${viewerNote}` : "",
         `\n🔗 ${viewUrl}`,
       ].filter(l => l !== "").join("\n");
       await send(lines);
