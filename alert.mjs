@@ -318,12 +318,13 @@ if (intervalSec > 0 && durationMin > 0) {
     try { await runOnce(); } catch (e) { console.error("폴링 오류:", e.message); }
     await maybeTriggerNightly();
     await maybeMorningBrief();
-    // 부산시의회 조례안(입법예고·의안접수) — 1시간에 1번 확인
-    if (Date.now() - lastOrdCheck > 55 * 60 * 1000) {
-      lastOrdCheck = Date.now();
-      await checkOrdinances(state, sendLaw, sendBill);
-      saveState();
-    }
+    // 부산시의회 의정 체크는 로컬 PC(ord-local.mjs)로 이관됨 — 시의회 서버가 해외 IP(GitHub 러너)를 차단하기 때문.
+    // 차단이 풀리면 아래 주석을 해제해 클라우드로 복귀 가능.
+    // if (Date.now() - lastOrdCheck > 55 * 60 * 1000) {
+    //   lastOrdCheck = Date.now();
+    //   await checkOrdinances(state, sendLaw, sendBill);
+    //   saveState();
+    // }
     const remain = until - Date.now();
     if (remain <= intervalSec * 1000) break;
     // 다음 뉴스 확인까지 대기하는 동안 20초마다 "TOP n" 명령 확인 (빠른 응답)
