@@ -200,15 +200,16 @@ const tg = (token, method, body) => fetch(`https://api.telegram.org/bot${token}/
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 });
 const TG = (method, body) => tg(TG_BOT_TOKEN, method, body);   // 속보봇 기본
-// 콜백에 담을 이슈 라벨 (64바이트 제한 → UTF-8 기준 안전 절단)
-function labelToData(label) {
-  let s = "iss:" + label, b = Buffer.from(s, "utf8");
-  while (b.length > 60) { label = label.slice(0, -1); s = "iss:" + label; b = Buffer.from(s, "utf8"); }
+// 콜백 데이터: "iss:<날짜>|<라벨>" (64바이트 제한 → UTF-8 기준 라벨만 절단, 날짜로 정확한 아카이브 조회)
+function labelToData(label, dateStr) {
+  const prefix = "iss:" + dateStr + "|";
+  let s = prefix + label;
+  while (Buffer.from(s, "utf8").length > 60) { label = label.slice(0, -1); s = prefix + label; }
   return s;
 }
-// 이슈별 버튼(누르면 링크 모음) — 상위 12개까지 세로 배열
-function issueKeyboard(list) {
-  const rows = list.slice(0, 12).map((c, i) => [{ text: `${i + 1}. ${c.label} (${c.count})`, callback_data: labelToData(c.label) }]);
+// 이슈별 버튼(누르면 링크 모음) — 상위 12개까지 세로 배열, dateStr=순위표 기준일
+function issueKeyboard(list, dateStr) {
+  const rows = list.slice(0, 12).map((c, i) => [{ text: `${i + 1}. ${c.label} (${c.count})`, callback_data: labelToData(c.label, dateStr) }]);
   return rows.length ? { inline_keyboard: rows } : undefined;
 }
 
@@ -223,7 +224,7 @@ async function replyRanking(token, chatId, n, dates, headerLabel) {
   for (let i = 0; i < msgs.length; i++) {
     const body = { chat_id: chatId, text: msgs[i], parse_mode: "HTML", disable_web_page_preview: true };
     if (i === msgs.length - 1) {                          // 버튼은 마지막 메시지에 부착
-      const kb = issueKeyboard(list);
+      const kb = issueKeyboard(list, dates[0]);           // dates[0] = 이 순위표의 기준일
       if (kb) { body.reply_markup = kb; body.text += "\n\n👇 이슈를 누르면 관련 기사 링크가 옵니다"; }
     }
     await tg(token, "sendMessage", body);
@@ -254,11 +255,12 @@ async function pollCommands(token, offsetKey) {
         await tg(token, "answerCallbackQuery", { callback_query_id: cq.id });
         const chatId = cq.message?.chat?.id;
         if (chatId && CHAT_IDS.includes(String(chatId)) && (cq.data || "").startsWith("iss:")) {
-          const label = cq.data.slice(4);
-          // 버튼이 달린 메시지 발송일(그날 KST)의 아카이브에서 링크 검색 — 브리핑은 전날, TOP은 당일
-          const msgKst = new Date((cq.message?.date || Date.now()/1000) * 1000 + 9*3600*1000).toISOString().slice(0,10);
-          console.log(`버튼(${offsetKey}): ${label}`);
-          await replyIssueLinks(token, chatId, label, [msgKst, kstDate(0)]);
+          const rest = cq.data.slice(4);
+          const bar = rest.indexOf("|");
+          const dateStr = bar > 0 ? rest.slice(0, bar) : kstDate(0);   // 콜백에 담긴 기준일
+          const label = bar > 0 ? rest.slice(bar + 1) : rest;
+          console.log(`버튼(${offsetKey}): ${dateStr} / ${label}`);
+          await replyIssueLinks(token, chatId, label, [dateStr]);
         }
         continue;
       }
