@@ -109,6 +109,7 @@ function saveState() {
     seen: [...seen].slice(-STATE_CAP),
     titles: [...seenTitles].slice(-STATE_CAP),
     tgOffset: state.tgOffset || 0,
+    briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
     ordSno: state.ordSno || 0,
     ordBill: state.ordBill || 0,
@@ -192,11 +193,13 @@ async function runOnce() {
   saveState();
 }
 
-// ---- "TOP n" 명령 응답 (지정 채팅방에서 "TOP 10"이라고 치면 그 시점 이슈 순위표 회신) ----
-let tgOffset = state.tgOffset || 0;
-const TG = (method, body) => fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/${method}`, {
+// ---- "TOP n" 명령 응답 / 아침 브리핑 (봇별 토큰으로 발송) ----
+// 아침 브리핑 전용 봇(TG_BRIEF_TOKEN). 미설정 시 속보봇으로 폴백.
+const BRIEF_TOKEN = process.env.TG_BRIEF_TOKEN || TG_BOT_TOKEN;
+const tg = (token, method, body) => fetch(`https://api.telegram.org/bot${token}/${method}`, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 });
+const TG = (method, body) => tg(TG_BOT_TOKEN, method, body);   // 속보봇 기본
 // 콜백에 담을 이슈 라벨 (64바이트 제한 → UTF-8 기준 안전 절단)
 function labelToData(label) {
   let s = "iss:" + label, b = Buffer.from(s, "utf8");
@@ -209,10 +212,10 @@ function issueKeyboard(list) {
   return rows.length ? { inline_keyboard: rows } : undefined;
 }
 
-async function replyRanking(chatId, n, dates, headerLabel) {
+async function replyRanking(token, chatId, n, dates, headerLabel) {
   const items = loadDays(dates);
   if (!items.length) {
-    await TG("sendMessage", { chat_id: chatId, text: "아직 집계할 아카이브가 없습니다. (축적 시작 직후이거나 해당 날짜 데이터 없음)" });
+    await tg(token, "sendMessage", { chat_id: chatId, text: "아직 집계할 아카이브가 없습니다. (축적 시작 직후이거나 해당 날짜 데이터 없음)" });
     return;
   }
   const list = topIssues(items, n);
@@ -223,55 +226,57 @@ async function replyRanking(chatId, n, dates, headerLabel) {
       const kb = issueKeyboard(list);
       if (kb) { body.reply_markup = kb; body.text += "\n\n👇 이슈를 누르면 관련 기사 링크가 옵니다"; }
     }
-    await TG("sendMessage", body);
+    await tg(token, "sendMessage", body);
     await new Promise(r => setTimeout(r, 300));
   }
 }
 
-// 버튼 클릭 → 그 이슈의 기사 링크 모음 회신
-async function replyIssueLinks(chatId, label) {
-  const arts = articlesForLabel(loadDays([kstDate(0)]), label).slice(0, 15);
-  if (!arts.length) { await TG("sendMessage", { chat_id: chatId, text: `"${label}" 관련 기사를 찾지 못했습니다.` }); return; }
+// 버튼 클릭 → 그 이슈의 기사 링크 모음 회신 (해당 이슈의 아카이브 날짜 = 순위표 발송일 기준)
+async function replyIssueLinks(token, chatId, label, dates) {
+  const arts = articlesForLabel(loadDays(dates), label).slice(0, 15);
+  if (!arts.length) { await tg(token, "sendMessage", { chat_id: chatId, text: `"${label}" 관련 기사를 찾지 못했습니다.` }); return; }
   const lines = arts.map((a, i) => `${i + 1}. <b>[${esc(a.src || "")}]</b> ${esc(String(a.t).slice(0, 55))}\n${a.url}`);
-  await TG("sendMessage", {
+  await tg(token, "sendMessage", {
     chat_id: chatId, parse_mode: "HTML", disable_web_page_preview: true,
     text: `🔗 <b>${esc(label)}</b> 관련 기사 ${arts.length}건\n\n${lines.join("\n\n")}`,
   });
 }
-async function pollCommands() {
+// 봇별 명령·버튼 처리 (offsetKey로 봇마다 getUpdates 오프셋 분리)
+async function pollCommands(token, offsetKey) {
   try {
-    const r = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/getUpdates?offset=${tgOffset + 1}&timeout=0`);
+    const off = state[offsetKey] || 0;
+    const r = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${off + 1}&timeout=0`);
     const j = await r.json();
     for (const u of j.result || []) {
-      tgOffset = u.update_id;
-      // 버튼 클릭(콜백) 처리
+      state[offsetKey] = u.update_id;
       if (u.callback_query) {
         const cq = u.callback_query;
-        await TG("answerCallbackQuery", { callback_query_id: cq.id });   // 로딩 스피너 종료
+        await tg(token, "answerCallbackQuery", { callback_query_id: cq.id });
         const chatId = cq.message?.chat?.id;
         if (chatId && CHAT_IDS.includes(String(chatId)) && (cq.data || "").startsWith("iss:")) {
           const label = cq.data.slice(4);
-          console.log(`버튼: ${label}`);
-          await replyIssueLinks(chatId, label);
+          // 버튼이 달린 메시지 발송일(그날 KST)의 아카이브에서 링크 검색 — 브리핑은 전날, TOP은 당일
+          const msgKst = new Date((cq.message?.date || Date.now()/1000) * 1000 + 9*3600*1000).toISOString().slice(0,10);
+          console.log(`버튼(${offsetKey}): ${label}`);
+          await replyIssueLinks(token, chatId, label, [msgKst, kstDate(0)]);
         }
         continue;
       }
       const m = u.message;
       if (!m || !m.text) continue;
-      if (!CHAT_IDS.includes(String(m.chat.id))) continue;               // 지정된 방에서만
-      if (Date.now() / 1000 - m.date > 600) continue;                    // 10분 지난 메시지 무시
+      if (!CHAT_IDS.includes(String(m.chat.id))) continue;
+      if (Date.now() / 1000 - m.date > 600) continue;
       const mt = m.text.match(/(?:top|톱)\s*(\d{1,3})/i);
       if (mt) {
         const n = Math.min(100, Math.max(1, Number(mt[1])));
-        console.log(`명령 수신: TOP ${n}`);
-        await replyRanking(m.chat.id, n, [kstDate(0)], `오늘 부산 이슈 TOP ${n} — ${kstDate(0)} 현재`);
+        console.log(`명령 수신(${offsetKey}): TOP ${n}`);
+        await replyRanking(token, m.chat.id, n, [kstDate(0)], `오늘 부산 이슈 TOP ${n} — ${kstDate(0)} 현재`);
       }
     }
-    state.tgOffset = tgOffset;
-  } catch (e) { console.error("명령 확인 실패:", e.message); }
+  } catch (e) { console.error(`명령 확인 실패(${offsetKey}):`, e.message); }
 }
 
-// ---- 아침 7시(KST = 22:00 UTC) 전날 TOP 10 브리핑 ----
+// ---- 아침 7시(KST = 22:00 UTC) 전날 TOP 10 브리핑 → 브리핑 전용 봇 ----
 async function maybeMorningBrief() {
   const now = new Date();
   const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
@@ -284,8 +289,8 @@ async function maybeMorningBrief() {
   const d = new Date(today + "T12:00:00Z");
   const days = ["일","월","화","수","목","금","토"];
   for (const chat of CHAT_IDS)
-    await replyRanking(chat, 10, [yesterday], `☀️ ${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 이슈 TOP 10`);
-  console.log("☀️ 아침 브리핑 발송 완료");
+    await replyRanking(BRIEF_TOKEN, chat, 10, [yesterday], `☀️ ${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 이슈 TOP 10`);
+  console.log("☀️ 아침 브리핑 발송 완료 (브리핑 봇)");
 }
 
 // ---- 밤 10시 1분(KST=13:01 UTC) 정리보고 트리거 ----
@@ -330,7 +335,9 @@ if (intervalSec > 0 && durationMin > 0) {
     // 다음 뉴스 확인까지 대기하는 동안 20초마다 "TOP n" 명령 확인 (빠른 응답)
     const waitEnd = Date.now() + intervalSec * 1000;
     while (Date.now() < waitEnd - 500) {
-      await pollCommands();
+      await pollCommands(TG_BOT_TOKEN, "tgOffset");                        // 속보봇: TOP 명령·버튼
+      if (BRIEF_TOKEN !== TG_BOT_TOKEN) await pollCommands(BRIEF_TOKEN, "briefOffset"); // 브리핑봇: 버튼
+      saveState();
       const left = waitEnd - Date.now();
       if (left <= 500) break;
       await new Promise(r2 => setTimeout(r2, Math.min(20000, left)));
