@@ -293,13 +293,13 @@ async function maybeMorningBrief() {
   for (const chat of CHAT_IDS)
     await replyRanking(BRIEF_TOKEN, chat, 10, [yesterday], `☀️ ${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 이슈 TOP 10`);
   console.log("☀️ 아침 브리핑 발송 완료 (브리핑 봇)");
-  // 월요일 아침엔 주간 누적 리포트도 함께 (지난 7일)
-  if (d.getUTCDay() === 1) await sendWeeklyReport();
+  // 일요일 아침엔 주간 누적 리포트도 함께 (직전 한 주: 지난 일~토)
+  if (d.getUTCDay() === 0) await sendWeeklyReport();
 }
 
-// ---- 주간 누적 리포트 (지난 7일, 월요일 아침 브리핑에 동봉) ----
+// ---- 주간 누적 리포트 (직전 한 주 일~토, 일요일 아침 브리핑에 동봉) ----
 async function sendWeeklyReport() {
-  const dates = Array.from({ length: 7 }, (_, i) => kstDate(-1 - i)).reverse();  // 어제부터 7일 전까지
+  const dates = Array.from({ length: 7 }, (_, i) => kstDate(-1 - i)).reverse();  // 지난 일요일 ~ 어제(토)
   const items = loadDays(dates);
   if (!items.length) return;
   const wk = ["일","월","화","수","목","금","토"];
@@ -308,7 +308,7 @@ async function sendWeeklyReport() {
     return `· ${dt.slice(5)}(${wd}) ${n.toLocaleString()}건`;
   });
   const list = topIssues(items, 20);
-  const head = `📚 <b>주간 누적 리포트</b>\n<b>${dates[0].replace(/-/g, ".")} ~ ${dates[dates.length-1].replace(/-/g, ".")}</b> (7일)\n총 <b>${items.length.toLocaleString()}건</b>\n\n<b>[일자별]</b>\n${perDay.join("\n")}`;
+  const head = `📚 <b>주간 누적 리포트</b>\n<b>${dates[0].replace(/-/g, ".")}(일) ~ ${dates[dates.length-1].replace(/-/g, ".")}(토)</b>\n총 <b>${items.length.toLocaleString()}건</b>\n\n<b>[일자별]</b>\n${perDay.join("\n")}`;
   const rank = `📊 <b>주간 이슈 TOP 20</b>\n` + list.map((c, i) => `${String(i + 1).padStart(2)}. <b>${esc(c.label)}</b> — ${c.count}건`).join("\n");
   for (const chat of CHAT_IDS) { await tg(BRIEF_TOKEN, "sendMessage", { chat_id: chat, text: head, parse_mode: "HTML", disable_web_page_preview: true }); await tg(BRIEF_TOKEN, "sendMessage", { chat_id: chat, text: rank, parse_mode: "HTML", disable_web_page_preview: true }); }
   console.log("📚 주간 누적 리포트 발송 완료");
