@@ -1,0 +1,14 @@
+name: 검증 (임시)
+on: { workflow_dispatch: { inputs: { d: { required: true } } } }
+jobs:
+  v:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - working-directory: nightly
+        run: |
+          npm ci
+          npx puppeteer browsers install chrome
+          node scrape.mjs ${{ inputs.d }}
