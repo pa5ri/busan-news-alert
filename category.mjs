@@ -41,6 +41,48 @@ export function categorize(item) {
   return "기타";
 }
 
+// ── 단독·속보 판별 + 부산 관련성 판정 ──
+// 부산 지명(구·군·주요 지역)
+const BUSAN_PLACE = /부산|해운대|기장|사하|사상|영도|동래|금정|수영구|부산진|강서구|연제|남포|서면|센텀|광안|자갈치|북항|사직|구덕|가덕|낙동강|온천천|을숙도|다대포|송정|태종대|감천|초량|덕천|하단|명지|정관|일광/;
+// 부산 기관·기업 (본문 언급만으로도 부산 사안임을 보증)
+const BUSAN_ORG = /부산시|부산광역시|부산시의회|부산시교육청|부산경찰청|부산소방|부산항|부산항만공사|부산은행|BNK|부산대|부경대|동아대|부산교통공사|벡스코|부산국제|에어부산|부산상의|부산상공회의소|부산지법|부산지검|부산고법|롯데 ?자이언츠|KNN|부산일보|국제신문|김해공항|부산박물관|부산의료원|부산연구원|부산관광공사|부산신항/;
+// 여러 지역을 나란히 열거하는 '스침' 패턴 (부산이 그중 하나로만 등장)
+const LIST_MENTION = /부산[,·\s]*(대전|대구|광주|인천|울산|경남|경북|전남|전북|충남|충북|강원|제주|서울|세종)|(대전|대구|광주|인천|울산|경남|경북|전남|전북|충남|충북|강원|제주|서울|세종)[,·\s]*부산/;
+
+export const isExclusive = t => /\[단독\]|【단독】|^단독\s/.test(String(t));
+export const isBreaking  = t => /\[속보\]|【속보】|^속보\s/.test(String(t));
+export const isScoop = t => isExclusive(t) || isBreaking(t);
+
+/**
+ * 부산 사안인지 판정 (단독·속보 방에 넣을지 결정)
+ * ① 제목에 부산 지명/기관 → 통과
+ * ② 제목엔 없어도 본문에 부산 기관 언급 → 통과
+ * ③ 본문에 부산 지명이 2회 이상 → 통과
+ * ④ 다른 시·도와 나란히 열거된 스침만 있으면 → 제외
+ */
+export function isBusanRelevant(item) {
+  const title = String(item.t || item.title || "");
+  const ctx = String(item.ctx || item.description || "");
+  // ① 제목에 부산 지명/기관이 있으면 부산 사안 (가장 강한 신호)
+  if (BUSAN_PLACE.test(title) || BUSAN_ORG.test(title)) return true;
+  // ② 제목에 없다면, 본문 언급이 '스침'인지 판별해 걸러낸다
+  //    - 개최지 언급형: "부산 벡스코에서 열린 제48차…" (부산이 장소일 뿐, 사안은 전국·해외)
+  //    - 경력 나열형:  "부산지검 부장, 대검 과장 등을 거친" (인물 프로필)
+  //    - 지점 나열형:  "서울 인천 부산 제주에 각각 1개소" (기업 사업장 열거)
+  const isVenueOnly  = /부산\s*(벡스코|해운대구? 벡스코)?\S*\s*에서\s*(열린|열리고|열리는|개최|개막)/.test(ctx) && !BUSAN_ORG.test(title);
+  const isCareerList = /부산(지검|고검|지법|고법|경찰서|지방국세청)[^.]{0,40}(거친|지낸|역임|출신|부장|과장|차장)/.test(ctx);
+  const isBranchList = LIST_MENTION.test(ctx);
+  // 전국 단위 사안(제도·정책·통계·정치일정)에서 부산이 예시로만 스친 경우
+  const isNationwide = /(전국|모든|전 지역|시중·지방은행|권역별|지자체)[^.]{0,30}(시행|도입|확대|추진|설명회|협약)/.test(ctx)
+                    || /(당대표|전당대회|여론조사|지지율|권한쟁의|국정조사|헌재)/.test(title);
+  if (isVenueOnly || isCareerList || isBranchList || isNationwide) return false;
+  // ③ 부산 기관이 사안의 주체로 등장하면 통과
+  if (BUSAN_ORG.test(ctx)) return true;
+  // ④ 부산 지명이 2회 이상 반복되면 부산 사안으로 인정
+  const hits = (ctx.match(new RegExp(BUSAN_PLACE.source, "g")) || []).length;
+  return hits >= 2;
+}
+
 // 분야별 이모지 (메시지 머리표)
 export const CAT_EMOJI = {
   "정치": "🗳", "경제": "💼", "사회": "👮", "생활/문화": "🏡",

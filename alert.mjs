@@ -4,7 +4,7 @@
 import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, formatStories, kstDate } from "./insight.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
-import { categorize, CAT_EMOJI } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant } from "./category.mjs";
 
 const KEYWORD = "부산";
 const MAX_PER_RUN = 30;          // 1회 실행당 최대 전송(폭주 방지)
@@ -207,6 +207,14 @@ async function runOnce() {
     const cat = categorize({ t: title, ctx, nlink: it.link, url: it.originallink });
     const msg = `${CAT_EMOJI[cat] || "📰"} <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
     await sendCat(cat, msg);
+    // 단독·속보 중 '부산 사안'만 별도 토픽에도 (중요 기사 전용 방)
+    const rec = { t: title, ctx, nlink: it.link, url: it.originallink };
+    if (isScoop(title) && isBusanRelevant(rec)) {
+      const tag = isExclusive(title) ? "단독" : "속보";
+      const clean = title.replace(/\[(단독|속보)\]\s*/g, "").trim();
+      await sendCat("단독·속보",
+        `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…`);
+    }
     archive(it, name, cat);
     await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
   }
