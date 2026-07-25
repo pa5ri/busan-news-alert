@@ -30,11 +30,8 @@ jobs:
           NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_BRIEF_TOKEN: ${{ secrets.TG_BRIEF_TOKEN }}
-          TG_CAT_POL: ${{ secrets.TG_CAT_POL }}
-          TG_CAT_ECO: ${{ secrets.TG_CAT_ECO }}
-          TG_CAT_SOC: ${{ secrets.TG_CAT_SOC }}
-          TG_CAT_CUL: ${{ secrets.TG_CAT_CUL }}
-          TG_CAT_SPO: ${{ secrets.TG_CAT_SPO }}
+          TG_TOPIC_GROUP: ${{ secrets.TG_TOPIC_GROUP }}
+          TG_TOPICS: ${{ secrets.TG_TOPICS }}
           TG_ORD_TOKEN: ${{ secrets.TG_ORD_TOKEN }}
           TG_BILL_TOKEN: ${{ secrets.TG_BILL_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}

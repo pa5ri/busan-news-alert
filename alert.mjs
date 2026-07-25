@@ -76,19 +76,30 @@ const naverH = { "X-NCP-APIGW-API-KEY-ID": NAVER_ID, "X-NCP-APIGW-API-KEY": NAVE
 
 // 쉼표로 여러 방 지정 가능: "8268488349,-5514645704" (개인+그룹)
 const CHAT_IDS = String(TG_CHAT_ID).split(",").map(s => s.trim()).filter(Boolean);
-// 분야별 전용 봇 토큰 (없으면 통합 속보봇으로 폴백)
-const CAT_TOKENS = {
-  "정치":   process.env.TG_CAT_POL  || "",
-  "경제":   process.env.TG_CAT_ECO  || "",
-  "사회":   process.env.TG_CAT_SOC  || "",
-  "문화":   process.env.TG_CAT_CUL  || "",
-  "스포츠": process.env.TG_CAT_SPO  || "",
-};
-// text를 지정 토큰으로 발송 (토큰 없으면 통합봇)
-async function sendWith(token, text) {
+// ---- 분야별 토픽 발송 ----
+// 포럼(토픽) 그룹 하나에서 분야별 토픽으로 나눠 보낸다. TG_TOPIC_GROUP=그룹ID,
+// TG_TOPICS='{"정치":2,"경제":3,...}' (분야→message_thread_id). 미설정이면 기존 단일 방으로.
+const TOPIC_GROUP = process.env.TG_TOPIC_GROUP || "";
+let TOPICS = {};
+try { TOPICS = JSON.parse(process.env.TG_TOPICS || "{}"); } catch { TOPICS = {}; }
+
+// 분야를 지정해 발송 (토픽 설정이 있으면 그 토픽으로, 없으면 기본 방으로)
+async function sendCat(cat, text) {
+  if (TOPIC_GROUP && TOPICS[cat]) {
+    const res = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: TOPIC_GROUP, message_thread_id: TOPICS[cat], text, parse_mode: "HTML" }),
+    });
+    const jj = await res.json();
+    if (!jj.ok) console.error(`토픽 전송 실패(${cat}):`, JSON.stringify(jj).slice(0, 200));
+    return jj.ok;
+  }
+  return send(text);
+}
+async function send(text) {
   let ok = true;
   for (const chat of CHAT_IDS) {
-    const res = await fetch(`https://api.telegram.org/bot${token || TG_BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML" }), // 미리보기 카드 유지
     });
@@ -97,7 +108,6 @@ async function sendWith(token, text) {
   }
   return ok;
 }
-const send = text => sendWith(TG_BOT_TOKEN, text);
 
 // ---- 아카이브 (인사이트 분석용 축적 — archive/YYYY-MM-DD.jsonl, KST 날짜 기준) ----
 function archive(it, pressName, cat) {
@@ -196,7 +206,7 @@ async function runOnce() {
     // 분야 판별 → 해당 분야 전용 봇으로 발송 (미설정 분야는 통합봇)
     const cat = categorize({ t: title, ctx, nlink: it.link, url: it.originallink });
     const msg = `${CAT_EMOJI[cat] || "📰"} <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
-    await sendWith(CAT_TOKENS[cat], msg);
+    await sendCat(cat, msg);
     archive(it, name, cat);
     await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
   }
