@@ -1,0 +1,23 @@
+name: 주제 셋업 (일회성)
+
+on:
+  workflow_dispatch:
+    inputs:
+      chat_id:
+        description: "그룹 chat id (비우면 getUpdates에서 제목으로 탐색)"
+        required: false
+        default: ""
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 주제 생성
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          GROUP_CHAT_ID: ${{ inputs.chat_id }}
+        run: node setup_topics.mjs
