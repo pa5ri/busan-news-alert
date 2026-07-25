@@ -7,7 +7,10 @@ import { checkOrdinances } from "./ordinance.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant } from "./category.mjs";
 
 const KEYWORD = "부산";
-const MAX_PER_RUN = 30;          // 1회 실행당 최대 전송(폭주 방지)
+// 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
+// 실제 처리량을 정하는 것은 텔레그램 그룹 한도(분당 20건)를 지키는 SEND_GAP_MS 페이싱이고,
+// 이 값은 한 회차가 지나치게 길어져 명령 응답·밤10시 트리거가 밀리지 않게 막는 backstop이다.
+const MAX_PER_RUN = Number(process.env.MAX_PER_RUN || 60);
 const FIRST_RUN_SEND = 5;        // 최초 실행 시엔 최신 5건만
 const STATE_FILE = "state.json";
 const STATE_CAP = 3000;          // 보관하는 기존 키 수
@@ -92,29 +95,52 @@ function destFor(key, fallbackChat) {
 // 기능별 목적지 목록(주제가 있으면 그 한 곳, 없으면 기존 방 전체)
 const destsFor = key => (TOPIC_GROUP && TOPICS[key]) ? [destFor(key)] : CHAT_IDS.map(c => ({ chat_id: c }));
 
-// 분야를 지정해 발송 (토픽 설정이 있으면 그 토픽으로, 없으면 기본 방으로)
-async function sendCat(cat, text) {
-  if (TOPIC_GROUP && TOPICS[cat]) {
+// ---- 텔레그램 속도 제한 대응 ----
+// 텔레그램은 같은 그룹에 분당 약 20건까지만 허용한다. 토픽을 여러 개로 나눠도
+// 결국 같은 그룹(chat) 하나이므로 한도는 그대로 공유된다.
+// 그래서 ①최소 간격을 지켜 보내고 ②429가 오면 retry_after만큼 기다렸다 재시도한다.
+// (2026-07-25 실측: 400ms 간격으로 30건 연속 발송 → 10건이 429로 유실됨)
+const SEND_GAP_MS = Number(process.env.SEND_GAP_MS || 3500);   // ≈17건/분 (한도 20건/분 대비 여유)
+let lastSentAt = 0;
+async function pace() {
+  const wait = SEND_GAP_MS - (Date.now() - lastSentAt);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastSentAt = Date.now();
+}
+// 성공하면 true. 429는 기다렸다 재시도하고, 그 외 오류는 재시도해도 같으므로 바로 false.
+async function tgSend(body, label) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    await pace();
     const res = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: TOPIC_GROUP, message_thread_id: TOPICS[cat], text, parse_mode: "HTML" }),
+      body: JSON.stringify(body),
     });
-    const jj = await res.json();
-    if (!jj.ok) console.error(`토픽 전송 실패(${cat}):`, JSON.stringify(jj).slice(0, 200));
-    return jj.ok;
+    const j = await res.json();
+    if (j.ok) return true;
+    const ra = j.parameters?.retry_after;
+    if (ra) {
+      console.error(`속도제한(${label}) — ${ra}초 대기 후 재시도 ${attempt}/4`);
+      await new Promise(r => setTimeout(r, (ra + 1) * 1000));
+      lastSentAt = Date.now();
+      continue;
+    }
+    console.error(`전송 실패(${label}):`, JSON.stringify(j).slice(0, 200));
+    return false;
   }
+  console.error(`전송 포기(${label}) — 4회 재시도 실패, 다음 회차에 다시 시도`);
+  return false;
+}
+
+// 분야를 지정해 발송 (토픽 설정이 있으면 그 토픽으로, 없으면 기본 방으로)
+async function sendCat(cat, text) {
+  if (TOPIC_GROUP && TOPICS[cat])
+    return tgSend({ chat_id: TOPIC_GROUP, message_thread_id: TOPICS[cat], text, parse_mode: "HTML" }, cat);
   return send(text);
 }
 async function send(text) {
   let ok = true;
-  for (const chat of CHAT_IDS) {
-    const res = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML" }), // 미리보기 카드 유지
-    });
-    const jj = await res.json();
-    if (!jj.ok) { console.error(`전송 실패(${chat}):`, JSON.stringify(jj).slice(0, 200)); ok = false; }
-  }
+  for (const chat of CHAT_IDS)                                  // 미리보기 카드 유지
+    if (!await tgSend({ chat_id: chat, text, parse_mode: "HTML" }, String(chat))) ok = false;
   return ok;
 }
 
@@ -198,16 +224,18 @@ async function runOnce() {
 
   // 회차당 상한 초과분은 버리지 않고 '미표시'로 남겨 다음 회차(2분 뒤)에 이어서 전송 (이월)
   const sendGroups = firstRun ? freshGroups.slice(-FIRST_RUN_SEND) : freshGroups.slice(0, MAX_PER_RUN);
-  const markGroups = firstRun ? freshGroups : sendGroups;   // 최초 실행은 과거 백로그 전체를 본 것으로 처리
-  for (const { nt, grp } of markGroups) {
+  // ⚠ 최초 실행만 미리 '봤음' 처리(과거 백로그를 흘려보내는 용도).
+  //   평시에는 전송 성공 후에 표시한다 — 미리 표시하면 429 등으로 실패한 기사가 영구 유실된다.
+  if (firstRun) for (const { nt, grp } of freshGroups) {
     for (const g of grp) seen.add(g.k);
     seenTitles.add(nt);
   }
   const carry = freshGroups.length - sendGroups.length;
-  console.log(`[${new Date().toISOString().slice(11,19)}] 수집 ${items.length} | 신규 ${freshGroups.length} | 전송 ${sendGroups.length}${carry > 0 && !firstRun ? ` | 이월 ${carry}` : ""}${firstRun ? " (최초 실행)" : ""}`);
+  console.log(`[${new Date().toISOString().slice(11,19)}] 수집 ${items.length} | 신규 ${freshGroups.length} | 전송예정 ${sendGroups.length}${carry > 0 && !firstRun ? ` | 이월 ${carry}` : ""}${firstRun ? " (최초 실행)" : ""}`);
 
-  const toSend = sendGroups.map(sg => sg.pick);
-  for (const it of toSend) {
+  let sent = 0;
+  for (const sg of sendGroups) {
+    const it = sg.pick;
     const { name } = pressInfo(it.originallink || it.link);
     const title = strip(it.title);
     const link = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
@@ -215,7 +243,14 @@ async function runOnce() {
     // 분야 판별 → 해당 분야 전용 봇으로 발송 (미설정 분야는 통합봇)
     const cat = categorize({ t: title, ctx, nlink: it.link, url: it.originallink });
     const msg = `${CAT_EMOJI[cat] || "📰"} <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
-    await sendCat(cat, msg);
+    if (!await sendCat(cat, msg)) {           // 실패분은 미표시로 남겨 다음 회차에 재시도
+      console.error(`이번 회차 중단 — ${sendGroups.length - sent}건은 다음 회차로 이월`);
+      break;
+    }
+    // 전송이 확인된 뒤에 '보낸 기사'로 기록 (같은 제목 계열 전체를 함께 표시)
+    for (const g of sg.grp) seen.add(g.k);
+    seenTitles.add(sg.nt);
+    sent++;
     // 단독·속보 중 '부산 사안'만 별도 토픽에도 (중요 기사 전용 방)
     const rec = { t: title, ctx, nlink: it.link, url: it.originallink };
     if (isScoop(title) && isBusanRelevant(rec)) {
@@ -225,10 +260,10 @@ async function runOnce() {
         `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     archive(it, name, cat);
-    await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
+    if (sent % 10 === 0) saveState();   // 대량 이월 전송 중 잡이 죽어도 중복 재전송을 최소화
   }
   if (!firstRun && carry > 0)
-    await send(`⏳ 신규 ${freshGroups.length}건 중 ${sendGroups.length}건 전송 — 나머지 ${carry}건은 2분 뒤 이어서 전송됩니다.`);
+    await send(`⏳ 신규 ${freshGroups.length}건 중 ${sent}건 전송 — 나머지는 이어서 전송됩니다.`);
 
   firstRun = false;
   saveState();
