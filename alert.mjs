@@ -4,6 +4,7 @@
 import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, formatStories, kstDate } from "./insight.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
+import { categorize, CAT_EMOJI } from "./category.mjs";
 
 const KEYWORD = "부산";
 const MAX_PER_RUN = 30;          // 1회 실행당 최대 전송(폭주 방지)
@@ -75,10 +76,19 @@ const naverH = { "X-NCP-APIGW-API-KEY-ID": NAVER_ID, "X-NCP-APIGW-API-KEY": NAVE
 
 // 쉼표로 여러 방 지정 가능: "8268488349,-5514645704" (개인+그룹)
 const CHAT_IDS = String(TG_CHAT_ID).split(",").map(s => s.trim()).filter(Boolean);
-async function send(text) {
+// 분야별 전용 봇 토큰 (없으면 통합 속보봇으로 폴백)
+const CAT_TOKENS = {
+  "정치":   process.env.TG_CAT_POL  || "",
+  "경제":   process.env.TG_CAT_ECO  || "",
+  "사회":   process.env.TG_CAT_SOC  || "",
+  "문화":   process.env.TG_CAT_CUL  || "",
+  "스포츠": process.env.TG_CAT_SPO  || "",
+};
+// text를 지정 토큰으로 발송 (토큰 없으면 통합봇)
+async function sendWith(token, text) {
   let ok = true;
   for (const chat of CHAT_IDS) {
-    const res = await fetch(`https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${token || TG_BOT_TOKEN}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML" }), // 미리보기 카드 유지
     });
@@ -87,9 +97,10 @@ async function send(text) {
   }
   return ok;
 }
+const send = text => sendWith(TG_BOT_TOKEN, text);
 
 // ---- 아카이브 (인사이트 분석용 축적 — archive/YYYY-MM-DD.jsonl, KST 날짜 기준) ----
-function archive(it, pressName) {
+function archive(it, pressName, cat) {
   try {
     const kst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
     mkdirSync("archive", { recursive: true });
@@ -97,6 +108,7 @@ function archive(it, pressName) {
     appendFileSync(`archive/${kst}.jsonl`, JSON.stringify({
       t: strip2(it.title),                       // 제목
       src: pressName,                            // 매체
+      cat: cat || "",                            // 분야
       pub: it.pubDate,                           // 발행 시각
       url: it.originallink || it.link,           // 원문
       ctx: strip2(it.description).slice(0, 200), // 키워드 맥락
@@ -181,9 +193,11 @@ async function runOnce() {
     const title = strip(it.title);
     const link = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
     const ctx = strip(it.description).slice(0, 300);
-    const msg = `📰 <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
-    await send(msg);
-    archive(it, name);
+    // 분야 판별 → 해당 분야 전용 봇으로 발송 (미설정 분야는 통합봇)
+    const cat = categorize({ t: title, ctx, nlink: it.link, url: it.originallink });
+    const msg = `${CAT_EMOJI[cat] || "📰"} <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
+    await sendWith(CAT_TOKENS[cat], msg);
+    archive(it, name, cat);
     await new Promise(rr => setTimeout(rr, 400)); // 텔레그램 속도 제한 여유
   }
   if (!firstRun && carry > 0)
