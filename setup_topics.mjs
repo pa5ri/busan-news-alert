@@ -2,10 +2,7 @@
 // 주제 생성은 주제관리 권한이 있는 속보봇(TG_BOT_TOKEN)이, 검증 발송은 각 담당 봇 토큰이 수행한다.
 const GROUP = process.env.TG_TOPIC_GROUP;
 const NEW = [
-  { key: "TV", name: "📺 TV 모니터링(밤10시)", token: process.env.TG_NIGHTLY_TOKEN },
-  { key: "브리핑", name: "☀️ 아침 브리핑", token: process.env.TG_BRIEF_TOKEN },
-  { key: "입법예고", name: "📜 입법예고", token: process.env.TG_ORD_TOKEN },
-  { key: "의안정보", name: "🏛 의안정보", token: process.env.TG_BILL_TOKEN },
+  { key: "기타", name: "📰 기타/미분류", token: process.env.TG_BOT_TOKEN },
 ];
 
 async function api(token, method, body) {

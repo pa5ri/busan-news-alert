@@ -51,7 +51,8 @@ jobs:
         working-directory: nightly
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_NIGHTLY_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          # 통합 그룹의 "📺 TV 모니터링" 주제로 발송 ("그룹ID:주제ID"). 미설정 시 기존 방.
+          TG_CHAT_ID: ${{ secrets.TG_NIGHTLY_CHAT || secrets.TG_CHAT_ID }}
           NAVER_ID: ${{ secrets.NAVER_ID }}
           NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
         run: node run.mjs

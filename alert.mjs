@@ -83,6 +83,15 @@ const TOPIC_GROUP = process.env.TG_TOPIC_GROUP || "";
 let TOPICS = {};
 try { TOPICS = JSON.parse(process.env.TG_TOPICS || "{}"); } catch { TOPICS = {}; }
 
+// 기능별 목적지 — 통합 그룹의 주제가 설정돼 있으면 그 주제로, 없으면 기존 방으로.
+// 반환값은 sendMessage 본문에 그대로 펼쳐 쓴다: { chat_id, message_thread_id? }
+function destFor(key, fallbackChat) {
+  if (TOPIC_GROUP && TOPICS[key]) return { chat_id: TOPIC_GROUP, message_thread_id: TOPICS[key] };
+  return { chat_id: fallbackChat };
+}
+// 기능별 목적지 목록(주제가 있으면 그 한 곳, 없으면 기존 방 전체)
+const destsFor = key => (TOPIC_GROUP && TOPICS[key]) ? [destFor(key)] : CHAT_IDS.map(c => ({ chat_id: c }));
+
 // 분야를 지정해 발송 (토픽 설정이 있으면 그 토픽으로, 없으면 기본 방으로)
 async function sendCat(cat, text) {
   if (TOPIC_GROUP && TOPICS[cat]) {
@@ -142,18 +151,18 @@ function saveState() {
 // 의정 알림 전송 — 입법예고 봇(TG_ORD_TOKEN)·의안정보 봇(TG_BILL_TOKEN) 분리 운영
 const ORD_TOKEN = process.env.TG_ORD_TOKEN || TG_BOT_TOKEN;
 const BILL_TOKEN = process.env.TG_BILL_TOKEN || ORD_TOKEN;
-const sendVia = token => async text => {
-  for (const chat of CHAT_IDS) {
+const sendVia = (token, topicKey) => async text => {
+  for (const dest of destsFor(topicKey)) {
     const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }),
+      body: JSON.stringify({ ...dest, text, parse_mode: "HTML", disable_web_page_preview: true }),
     });
     const j = await r.json();
     if (!j.ok) console.error("의정 전송 실패:", JSON.stringify(j).slice(0, 150));
   }
 };
-const sendLaw = sendVia(ORD_TOKEN);
-const sendBill = sendVia(BILL_TOKEN);
+const sendLaw = sendVia(ORD_TOKEN, "입법예고");
+const sendBill = sendVia(BILL_TOKEN, "의안정보");
 
 // ---- 1회 폴링 ----
 async function runOnce() {
@@ -245,16 +254,17 @@ function issueKeyboard(list, dateStr) {
   return rows.length ? { inline_keyboard: rows } : undefined;
 }
 
-async function replyRanking(token, chatId, n, dates, headerLabel) {
+// dest = { chat_id, message_thread_id? } — 통합 그룹의 주제 또는 기존 방
+async function replyRanking(token, dest, n, dates, headerLabel) {
   const items = loadDays(dates);
   if (!items.length) {
-    await tg(token, "sendMessage", { chat_id: chatId, text: "아직 집계할 아카이브가 없습니다. (축적 시작 직후이거나 해당 날짜 데이터 없음)" });
+    await tg(token, "sendMessage", { ...dest, text: "아직 집계할 아카이브가 없습니다. (축적 시작 직후이거나 해당 날짜 데이터 없음)" });
     return;
   }
   const list = topIssues(items, n);
   const msgs = formatRanking(list, items.length, n, headerLabel);
   for (let i = 0; i < msgs.length; i++) {
-    const body = { chat_id: chatId, text: msgs[i], parse_mode: "HTML", disable_web_page_preview: true };
+    const body = { ...dest, text: msgs[i], parse_mode: "HTML", disable_web_page_preview: true };
     if (i === msgs.length - 1) {                          // 버튼은 마지막 메시지에 부착
       const kb = issueKeyboard(list, dates[0]);           // dates[0] = 이 순위표의 기준일
       if (kb) { body.reply_markup = kb; body.text += "\n\n👇 이슈를 누르면 관련 기사 링크가 옵니다"; }
@@ -265,29 +275,31 @@ async function replyRanking(token, chatId, n, dates, headerLabel) {
 }
 
 // 버튼 클릭 → 그 이슈의 기사 링크 모음 회신 (해당 이슈의 아카이브 날짜 = 순위표 발송일 기준)
-async function replyIssueLinks(token, chatId, label, dates) {
+async function replyIssueLinks(token, dest, label, dates) {
   const arts = articlesForLabel(loadDays(dates), label).slice(0, 15);
-  if (!arts.length) { await tg(token, "sendMessage", { chat_id: chatId, text: `"${label}" 관련 기사를 찾지 못했습니다.` }); return; }
+  if (!arts.length) { await tg(token, "sendMessage", { ...dest, text: `"${label}" 관련 기사를 찾지 못했습니다.` }); return; }
   const lines = arts.map((a, i) => `${i + 1}. <b>[${esc(a.src || "")}]</b> ${esc(String(a.t).slice(0, 55))}\n${a.url}`);
   await tg(token, "sendMessage", {
-    chat_id: chatId, parse_mode: "HTML", disable_web_page_preview: true,
+    ...dest, parse_mode: "HTML", disable_web_page_preview: true,
     text: `🔗 <b>${esc(label)}</b> 관련 기사 ${arts.length}건\n\n${lines.join("\n\n")}`,
   });
 }
 // 사건(스토리) 버튼 → 그 사건 기사 링크 모음. 헤드라인 앞부분으로 클러스터를 되찾는다.
-async function replyStoryLinks(token, chatId, headPrefix, dateStr) {
+async function replyStoryLinks(token, dest, headPrefix, dateStr) {
   const items = loadDays([dateStr]);
   const list = topStories(items, 30);
   const hit = list.find(s => String(s.headline).startsWith(headPrefix))
            || list.find(s => String(s.headline).slice(0, 12) === headPrefix.slice(0, 12));
   const arts = (hit ? hit.items : []).slice(0, 15);
-  if (!arts.length) { await tg(token, "sendMessage", { chat_id: chatId, text: "해당 이슈의 기사를 찾지 못했습니다." }); return; }
+  if (!arts.length) { await tg(token, "sendMessage", { ...dest, text: "해당 이슈의 기사를 찾지 못했습니다." }); return; }
   const lines = arts.map((a, i) => `${i + 1}. <b>[${esc(a.src || "")}]</b> ${esc(String(a.t).slice(0, 55))}\n${a.url}`);
   await tg(token, "sendMessage", {
-    chat_id: chatId, parse_mode: "HTML", disable_web_page_preview: true,
+    ...dest, parse_mode: "HTML", disable_web_page_preview: true,
     text: `🔗 <b>${esc(String(hit.headline).slice(0, 50))}</b>\n관련 기사 ${arts.length}건 (${dateStr})\n\n${lines.join("\n\n")}`,
   });
 }
+// 명령·버튼을 받아줄 방: 기존 개인방 + 통합 그룹
+const allowedChat = id => CHAT_IDS.includes(String(id)) || (TOPIC_GROUP && String(id) === String(TOPIC_GROUP));
 // 봇별 명령·버튼 처리 (offsetKey로 봇마다 getUpdates 오프셋 분리)
 async function pollCommands(token, offsetKey) {
   try {
@@ -301,26 +313,31 @@ async function pollCommands(token, offsetKey) {
         await tg(token, "answerCallbackQuery", { callback_query_id: cq.id });
         const chatId = cq.message?.chat?.id;
         const data = cq.data || "";
-        if (chatId && CHAT_IDS.includes(String(chatId)) && (data.startsWith("iss:") || data.startsWith("sty:"))) {
+        if (chatId && allowedChat(chatId) && (data.startsWith("iss:") || data.startsWith("sty:"))) {
+          // 통합 그룹에서 눌렀으면 그 주제 안에서 답한다
+          const dest = { chat_id: chatId };
+          if (cq.message?.message_thread_id) dest.message_thread_id = cq.message.message_thread_id;
           const rest = data.slice(4);
           const bar = rest.indexOf("|");
           const dateStr = bar > 0 ? rest.slice(0, bar) : kstDate(0);   // 콜백에 담긴 기준일
           const label = bar > 0 ? rest.slice(bar + 1) : rest;
           console.log(`버튼(${offsetKey}): ${dateStr} / ${label}`);
-          if (data.startsWith("sty:")) await replyStoryLinks(token, chatId, label, dateStr);
-          else await replyIssueLinks(token, chatId, label, [dateStr]);
+          if (data.startsWith("sty:")) await replyStoryLinks(token, dest, label, dateStr);
+          else await replyIssueLinks(token, dest, label, [dateStr]);
         }
         continue;
       }
       const m = u.message;
       if (!m || !m.text) continue;
-      if (!CHAT_IDS.includes(String(m.chat.id))) continue;
+      if (!allowedChat(m.chat.id)) continue;
       if (Date.now() / 1000 - m.date > 600) continue;
       const mt = m.text.match(/(?:top|톱)\s*(\d{1,3})/i);
       if (mt) {
         const n = Math.min(100, Math.max(1, Number(mt[1])));
         console.log(`명령 수신(${offsetKey}): TOP ${n}`);
-        await replyRanking(token, m.chat.id, n, [kstDate(0)], `오늘 부산 이슈 TOP ${n} — ${kstDate(0)} 현재`);
+        const dest = { chat_id: m.chat.id };
+        if (m.message_thread_id) dest.message_thread_id = m.message_thread_id;   // 물어본 주제에서 답장
+        await replyRanking(token, dest, n, [kstDate(0)], `오늘 부산 이슈 TOP ${n} — ${kstDate(0)} 현재`);
       }
     }
   } catch (e) { console.error(`명령 확인 실패(${offsetKey}):`, e.message); }
@@ -336,16 +353,16 @@ function storyKeyboard(list, dateStr) {
   });
   return rows.length ? { inline_keyboard: rows } : undefined;
 }
-async function sendStoryBrief(chatId, dateStr, headerLabel) {
+async function sendStoryBrief(dest, dateStr, headerLabel) {
   const items = loadDays([dateStr]);
   if (!items.length) {
-    await tg(BRIEF_TOKEN, "sendMessage", { chat_id: chatId, text: "해당 날짜의 아카이브가 없습니다." });
+    await tg(BRIEF_TOKEN, "sendMessage", { ...dest, text: "해당 날짜의 아카이브가 없습니다." });
     return;
   }
   const list = topStories(items, 10);
   const msgs = formatStories(list, items.length, headerLabel);
   for (let i = 0; i < msgs.length; i++) {
-    const body = { chat_id: chatId, text: msgs[i], parse_mode: "HTML", disable_web_page_preview: true };
+    const body = { ...dest, text: msgs[i], parse_mode: "HTML", disable_web_page_preview: true };
     if (i === msgs.length - 1) {
       const kb = storyKeyboard(list, dateStr);
       if (kb) { body.reply_markup = kb; body.text += "\n\n👇 이슈를 누르면 관련 기사 링크가 옵니다"; }
@@ -359,7 +376,7 @@ async function sendStoryBrief(chatId, dateStr, headerLabel) {
     const lines = jjs.map((s, i) => `<b>${i + 1}. ${esc(String(s.headline).slice(0, 60))}</b>\n    📰 ${s.count}건`);
     const cnt = items.filter(it => /전재수/.test(it.t + " " + (it.ctx || ""))).length;
     await tg(BRIEF_TOKEN, "sendMessage", {
-      chat_id: chatId, parse_mode: "HTML", disable_web_page_preview: true,
+      ...dest, parse_mode: "HTML", disable_web_page_preview: true,
       text: `🔎 <b>전재수 시장 관련</b> (어제 ${cnt}건)\n\n${lines.join("\n\n")}`,
       reply_markup: storyKeyboard(jjs, dateStr),
     });
@@ -378,8 +395,8 @@ async function maybeMorningBrief() {
   const yesterday = kstDate(-1);
   const d = new Date(today + "T12:00:00Z");
   const days = ["일","월","화","수","목","금","토"];
-  for (const chat of CHAT_IDS)
-    await sendStoryBrief(chat, yesterday, `☀️ ${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 주요 이슈`);
+  for (const dest of destsFor("브리핑"))
+    await sendStoryBrief(dest, yesterday, `☀️ ${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 주요 이슈`);
   console.log("☀️ 아침 브리핑 발송 완료 (브리핑 봇)");
   // 일요일 아침엔 주간 누적 리포트도 함께 (직전 한 주: 지난 일~토)
   if (d.getUTCDay() === 0) await sendWeeklyReport();
@@ -398,7 +415,7 @@ async function sendWeeklyReport() {
   const list = topIssues(items, 20);
   const head = `📚 <b>주간 누적 리포트</b>\n<b>${dates[0].replace(/-/g, ".")}(일) ~ ${dates[dates.length-1].replace(/-/g, ".")}(토)</b>\n총 <b>${items.length.toLocaleString()}건</b>\n\n<b>[일자별]</b>\n${perDay.join("\n")}`;
   const rank = `📊 <b>주간 이슈 TOP 20</b>\n` + list.map((c, i) => `${String(i + 1).padStart(2)}. <b>${esc(c.label)}</b> — ${c.count}건`).join("\n");
-  for (const chat of CHAT_IDS) { await tg(BRIEF_TOKEN, "sendMessage", { chat_id: chat, text: head, parse_mode: "HTML", disable_web_page_preview: true }); await tg(BRIEF_TOKEN, "sendMessage", { chat_id: chat, text: rank, parse_mode: "HTML", disable_web_page_preview: true }); }
+  for (const dest of destsFor("브리핑")) { await tg(BRIEF_TOKEN, "sendMessage", { ...dest, text: head, parse_mode: "HTML", disable_web_page_preview: true }); await tg(BRIEF_TOKEN, "sendMessage", { ...dest, text: rank, parse_mode: "HTML", disable_web_page_preview: true }); }
   console.log("📚 주간 누적 리포트 발송 완료");
 }
 

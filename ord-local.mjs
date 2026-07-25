@@ -15,14 +15,16 @@ for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
   const m = line.match(/^([A-Z_]+)=(.+)$/);
   if (m) process.env[m[1]] = m[2].trim();
 }
-const { TG_ORD_TOKEN, TG_BILL_TOKEN, TG_CHAT_ID } = process.env;
-const CHAT_IDS = String(TG_CHAT_ID).split(",").map(s => s.trim()).filter(Boolean);
+const { TG_ORD_TOKEN, TG_BILL_TOKEN, TG_CHAT_ID, TG_ORD_CHAT, TG_BILL_CHAT } = process.env;
+// 목적지는 "채팅ID" 또는 통합 그룹 주제 지정 "그룹ID:주제ID". 쉼표로 여러 곳 가능.
+const parseDests = s => String(s || "").split(",").map(x => x.trim()).filter(Boolean)
+  .map(x => { const [chat, thread] = x.split(":"); return { chat_id: chat, ...(thread ? { message_thread_id: Number(thread) } : {}) }; });
 
-const sendVia = token => async text => {
-  for (const chat of CHAT_IDS) {
+const sendVia = (token, target) => async text => {
+  for (const dest of parseDests(target || TG_CHAT_ID)) {
     const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true }),
+      body: JSON.stringify({ ...dest, text, parse_mode: "HTML", disable_web_page_preview: true }),
     });
     const j = await r.json();
     if (!j.ok) console.error("전송 실패:", JSON.stringify(j).slice(0, 150));
@@ -34,6 +36,6 @@ let state = { ordSno: 78748, ordBill: 16758, ordBillSampled: true };
 if (existsSync(STATE_FILE)) { try { state = JSON.parse(readFileSync(STATE_FILE, "utf8")); } catch {} }
 
 console.log(`[${new Date().toLocaleString("ko-KR")}] 의정 확인 시작 (기준: 예고 ${state.ordSno} / 의안 ${state.ordBill})`);
-await checkOrdinances(state, sendVia(TG_ORD_TOKEN), sendVia(TG_BILL_TOKEN));
+await checkOrdinances(state, sendVia(TG_ORD_TOKEN, TG_ORD_CHAT), sendVia(TG_BILL_TOKEN, TG_BILL_CHAT));
 writeFileSync(STATE_FILE, JSON.stringify(state));
 console.log("완료:", JSON.stringify(state));
