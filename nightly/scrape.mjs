@@ -3,14 +3,15 @@
 // 결과: data/broadcasters.json  [{group, source, items:[{title,url}], note?}]
 //
 // 날짜 지원 방식 (2026-07-19 검증):
-//  KBS 뉴스9 / KBS부산  → 공식 API (datetimeBegin/End + localCode 00/10)  [완전한 날짜 지정]
+//  KBS 뉴스9            → 공식 API broadCode=0001+broadDate                [프로그램+날짜]
+//  KBS부산 뉴스9        → 지역API+클로징~오프닝 구간 절단+21시 이후 필터     [프로그램+날짜]
 //  SBS 8뉴스            → programMain.do?broad_date=YYYYMMDD              [완전한 날짜 지정]
 //  KNN 뉴스아이          → /news/program/newseye?date=YYYYMMDD             [완전한 날짜 지정]
 //  부산MBC              → 목록 각 항목의 날짜 표기로 필터                   [날짜 필터]
-//  TV조선               → 기사 URL 속 날짜(html_dir/YYYY/MM/DD)로 필터      [날짜 필터]
-//  SBS(부산검색)         → keywordList.do?keyword=부산 (최신순, 날짜 표기 필터)
+//  TV조선 뉴스9         → broadcast 뉴스9 전용판 + URL 날짜 필터            [프로그램+날짜]
+//  SBS 부산관련          → keywordList.do?keyword=부산 (프로그램 아님: 부산 태그 기사, 날짜 필터)
 //  MBC 뉴스데스크        → 다시보기 인덱스=최신 방송분. 페이지 날짜 검증 후 수집 [최신+검증]
-//  JTBC 뉴스룸          → 뉴스룸 섹션=최신. 날짜 파라미터 없음               [최신, 검증 불가]
+//  JTBC 뉴스룸          → /program/NG10000002 전용판(video/NB), 페이지 날짜 검증 [프로그램+검증]
 import puppeteer from "puppeteer";
 import { writeFileSync, mkdirSync } from "node:fs";
 
@@ -143,33 +144,42 @@ try {
     push("중앙방송", "SBS 8뉴스", items.slice(0, 40));
   } catch (e) { push("중앙방송","SBS 8뉴스",[],"실패: "+e.message); }
 
-  // JTBC 뉴스룸 (최신만 — 날짜 파라미터 없음)
+  // JTBC 뉴스룸 — 프로그램 전용 페이지(/program/NG10000002). 리포트는 /video/NB… 형태.
   try {
-    const items = await withPage("https://news.jtbc.co.kr/section/list.aspx?scode=10", p => p.evaluate(() => {
-      const m = new Map();
-      document.querySelectorAll('a[href*="/article/NB"]').forEach(a => {
-        const t = (a.textContent||'').replace(/\s+/g,' ').trim();
-        const id = (a.href.match(/(NB\d+)/)||[])[1];
-        if (id && t.length > 8 && !m.has(id)) m.set(id, { title: t, url: `https://news.jtbc.co.kr/article/${id}` });
+    const { items, pageDate } = await withPage("https://news.jtbc.co.kr/program/NG10000002", async p => {
+      for (let i = 0; i < 4; i++) {                       // 그날 방송분 전체가 나오도록 스크롤
+        await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        await new Promise(r => setTimeout(r, 1200));
+      }
+      return p.evaluate(() => {
+        const m = new Map();
+        document.querySelectorAll('a[href*="/video/NB"]').forEach(a => {
+          const t = (a.textContent||'').replace(/\s+/g,' ').trim();
+          const id = (a.href.match(/(NB\d+)/)||[])[1];
+          if (id && t.length > 8 && !m.has(id)) m.set(id, { title: t, url: `https://news.jtbc.co.kr/article/${id}` });
+        });
+        const dm = document.body.innerText.match(/(\d{1,2})월\s*(\d{1,2})일/);
+        return { items: [...m.values()], pageDate: dm ? `${dm[1].padStart(2,"0")}-${dm[2].padStart(2,"0")}` : "" };
       });
-      return [...m.values()];
-    }));
-    const isToday = D === todayKST;
-    push("중앙방송", "JTBC 뉴스룸", isToday ? items.slice(0, 35) : [], isToday ? undefined : "과거 날짜 지정 미지원(최신만 제공)");
+    }, 2000);
+    const want = `${D.slice(4,6)}-${D.slice(6,8)}`;
+    if (!pageDate || pageDate === want) push("중앙방송", "JTBC 뉴스룸", items.slice(0, 40));
+    else push("중앙방송", "JTBC 뉴스룸", [], `사이트 최신 방송분이 ${pageDate} — 대상(${want})과 불일치`);
   } catch (e) { push("중앙방송","JTBC 뉴스룸",[],"실패: "+e.message); }
 
-  // TV조선 (홈에서 대상 날짜 URL만 필터)
+  // TV조선 뉴스9 — 프로그램 전용 페이지(broadcast 뉴스판) + URL 날짜 필터로 그 방송분만
   try {
-    const items = await withPage("https://news.tvchosun.com/", p => p.evaluate((dUrl) => {
+    const items = await withPage("https://broadcast.tvchosun.com/news/newspan/ch19.cstv", p => p.evaluate((dUrl) => {
       const m = new Map();
       document.querySelectorAll(`a[href*="html_dir/${dUrl}/"]`).forEach(a => {
-        let t = (a.textContent||'').replace(/\s+/g,' ').trim();
+        let t = (a.textContent||'').replace(/\s+/g,' ').trim()
+          .replace(/^(정치|경제|사회|국제|문화|스포츠|생활|연예|날씨)\s+/, '');   // 앞 카테고리 라벨 제거
         if (t.length > 52) t = t.slice(0, 50) + '…';
         if (t.length > 8 && !m.has(a.href)) m.set(a.href, { title: t, url: a.href });
       });
       return [...m.values()];
-    }, D_URL));
-    push("중앙방송", "TV조선 뉴스9", items.slice(0, 35), items.length === 0 ? `홈에 ${D_DASH}자 기사 없음` : undefined);
+    }, D_URL), 2000);
+    push("중앙방송", "TV조선 뉴스9", items.slice(0, 40), items.length === 0 ? `뉴스9 페이지에 ${D_DASH}자 리포트 없음` : undefined);
   } catch (e) { push("중앙방송","TV조선 뉴스9",[],"실패: "+e.message); }
 
   // 부산MBC (목록 항목 날짜 필터)
@@ -219,8 +229,8 @@ try {
       });
       return [...m.values()];
     }, D_DOT));
-    push("부산방송", "SBS(부산검색)", items.slice(0, 25), items.length === 0 ? `${D_DOT}자 부산 태그 기사 없음` : undefined);
-  } catch (e) { push("부산방송","SBS(부산검색)",[],"실패: "+e.message); }
+    push("부산방송", "SBS 부산관련", items.slice(0, 25), items.length === 0 ? `${D_DOT}자 부산 태그 기사 없음` : undefined);
+  } catch (e) { push("부산방송","SBS 부산관련",[],"실패: "+e.message); }
 
   // 지면 (최신 헤드라인 — 날짜 미지정)
   // 신문 홈에는 옛 기획기사가 섞이므로 URL 속 날짜로 최신분만 통과

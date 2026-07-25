@@ -13,7 +13,7 @@ const fstamp = dateStr.slice(0,10).replace(/\./g,"");
 
 const LAYOUT = {
   "중앙방송": ["KBS 뉴스9","MBC 뉴스데스크","SBS 8뉴스","JTBC 뉴스룸","TV조선 뉴스9"],
-  "부산방송": ["KBS부산","부산MBC","KNN 뉴스아이","SBS(부산검색)"],
+  "부산방송": ["KBS부산","부산MBC","KNN 뉴스아이","SBS 부산관련"],
   "지면": ["국제신문","부산일보"],
 };
 const byName = Object.fromEntries(bc.map(s => [s.source, s]));
@@ -21,7 +21,7 @@ const byName = Object.fromEntries(bc.map(s => [s.source, s]));
 const COLORS = {
   "KBS 뉴스9":"FF1A5FB4","MBC 뉴스데스크":"FF1A5FB4","SBS 8뉴스":"FF1A5FB4",
   "JTBC 뉴스룸":"FF6A1B9A","TV조선 뉴스9":"FF6A1B9A",
-  "KBS부산":"FF00796B","부산MBC":"FF00796B","KNN 뉴스아이":"FF00796B","SBS(부산검색)":"FF00796B",
+  "KBS부산":"FF00796B","부산MBC":"FF00796B","KNN 뉴스아이":"FF00796B","SBS 부산관련":"FF00796B",
   "국제신문":"FF2E7D32","부산일보":"FF2E7D32",
 };
 
