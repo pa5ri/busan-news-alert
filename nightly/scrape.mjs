@@ -50,15 +50,41 @@ async function kbs9Central() {
   const j = await (await fetch(u, { headers: KBS_H })).json();
   return (j.data || []).map(kbsMap).filter(it => it.title.length > 4 && !isMarker(it.title)).reverse();
 }
-// KBS부산: 지역API + 날짜범위. [뉴스9 부산 오프닝~클로징] 구간이 있으면 그 방송분만.
+// KBS부산 뉴스9: 지역 API는 그날 부산 지역 '전 프로그램'(뉴스광장·930뉴스·뉴스7·뉴스9)을
+// 시간 역순으로 한꺼번에 준다. 각 방송분은 [클로징] → 리포트들 → [헤드라인/오프닝] 순서이므로,
+// 뉴스9 클로징(21~22시대)부터 그 방송분의 시작 마커(헤드라인/오프닝)까지만 잘라낸다.
+// ※ 마커가 누락된 날을 대비해 방송 시각(21:00 이후)으로 2차 방어.
 async function kbsBusan() {
   const u = `https://news.kbs.co.kr/api/getNewsList?currentPageNo=1&rowsPerPage=80&exceptPhotoYn=Y&datetimeBegin=${D}000000&datetimeEnd=${D}235959&localCode=10&localCodeWithLocalReporterStationCode=10&orderBy=datetime_desc`;
   const j = await (await fetch(u, { headers: KBS_H })).json();
-  const raw = (j.data || []).map(kbsMap);
-  const iClose = raw.findIndex(it => /뉴스9 부산 클로징/.test(it.title));
-  const iOpen  = raw.findIndex(it => /뉴스9 부산 오프닝/.test(it.title));
-  const seg = (iClose >= 0 && iOpen > iClose) ? raw.slice(iClose + 1, iOpen) : raw;
-  return seg.filter(it => it.title.length > 4 && !isMarker(it.title)).reverse();
+  const rows = (j.data || []).map(n => ({
+    ...kbsMap(n),
+    time: String(n.serviceTime || n.newsTime || n.broadDate || ""),   // "YYYY-MM-DD HH:mm..."
+  }));
+  const hhmm = r => { const m = r.time.match(/(\d{2}):(\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : -1; };
+
+  const iClose = rows.findIndex(r => /뉴스9 부산 클로징/.test(r.title));
+  let seg;
+  if (iClose >= 0) {
+    // 클로징 다음부터 이 방송분의 시작 마커(뉴스9 헤드라인/오프닝) 직전까지
+    const rest = rows.slice(iClose + 1);
+    let end = rest.findIndex(r => /뉴스9 부산 (헤드라인|오프닝)/.test(r.title));
+    if (end < 0) {                                   // 시작 마커가 없으면 다른 프로그램 마커 전까지
+      end = rest.findIndex(r => /(뉴스7|930뉴스|뉴스광장) 부산/.test(r.title));
+    }
+    seg = end >= 0 ? rest.slice(0, end) : rest;
+  } else {
+    seg = rows;                                       // 클로징도 없으면 시간 필터에 위임
+  }
+  // 2차 방어: 뉴스9 방송 시간대(21:00~23:59)만 — 마커 오류로 타 프로그램이 섞이는 것 차단
+  const inNine = seg.filter(r => { const t = hhmm(r); return t < 0 || t >= 21 * 60; });
+  const picked = (inNine.length ? inNine : seg);
+  // 중복 제거(같은 리포트가 뉴스7·뉴스9에 재방송되는 경우 대비) 후 방송 순서대로
+  const seen = new Set();
+  return picked
+    .filter(it => it.title.length > 4 && !isMarker(it.title))
+    .filter(it => { const k = it.title.replace(/\s+/g, ""); if (seen.has(k)) return false; seen.add(k); return true; })
+    .reverse();
 }
 
 // ================= 브라우저 기반 소스들 =================
