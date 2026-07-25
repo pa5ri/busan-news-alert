@@ -92,6 +92,25 @@ export function topIssues(items, n = 10) {
   return out;
 }
 
+// 스토리형 브리핑 메시지 (대표 헤드라인 중심)
+export function formatStories(list, total, headerLabel, focusNote = "") {
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const lines = list.map((s, i) => {
+    const head = esc(String(s.headline).slice(0, 60));
+    const srcs = s.srcs.slice(0, 3).join("·") + (s.srcs.length > 3 ? ` 외 ${s.srcs.length - 3}곳` : "");
+    return `<b>${i + 1}. ${head}</b>\n    📰 ${s.count}건 · ${esc(srcs)}`;
+  });
+  const header = `📊 <b>${headerLabel}</b>\n<i>어제 부산 관련 보도 ${total.toLocaleString()}건을 사건 단위로 묶었습니다</i>${focusNote}`;
+  const msgs = [];
+  let cur = header;
+  for (const l of lines) {
+    if ((cur + "\n\n" + l).length > 3800) { msgs.push(cur); cur = l; }
+    else cur += "\n\n" + l;
+  }
+  msgs.push(cur);
+  return msgs;
+}
+
 // 텔레그램 메시지 문자열 배열(4096자 제한 대응 분할)
 export function formatRanking(list, total, n, headerLabel) {
   const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -109,6 +128,61 @@ export function formatRanking(list, total, n, headerLabel) {
   }
   msgs.push(cur);
   return msgs;
+}
+
+// ── 이슈 = 대표 헤드라인 (키워드 나열 대신 "무슨 일인지" 보여주는 방식) ──
+// 부산 지명·기관 (연관도 판정용)
+const BUSAN_RE = /부산|해운대|기장|사하구|사상구|영도|동래|금정|수영구|부산진|가덕|벡스코|낙동강|광안|자갈치|센텀|북항|사직|구덕|김해공항|에어부산|BNK/;
+// 같은 사건이면 한 덩어리로: 제목의 의미 토큰 집합이 많이 겹치면 동일 클러스터
+function keyTokens(title) {
+  return new Set(tokensOf(title).filter(w => w.length >= 2));
+}
+function overlap(a, b) {
+  let n = 0; for (const w of a) if (b.has(w)) n++;
+  return n / Math.max(1, Math.min(a.size, b.size));
+}
+/**
+ * 기사들을 사건 단위로 묶어 상위 n개 반환
+ * @returns [{ headline, count, srcs, busan, ex, labels }]
+ */
+export function topStories(items, n = 10, opts = {}) {
+  const focus = opts.focus ? new RegExp(opts.focus) : null;   // 예: /전재수/
+  const pool = focus ? items.filter(it => focus.test(it.t + " " + (it.ctx || ""))) : items;
+  const clusters = [];
+  for (const it of pool) {
+    const toks = keyTokens(it.t);
+    if (!toks.size) continue;
+    let best = null, bestScore = 0;
+    for (const c of clusters) {
+      const s = overlap(toks, c.toks);
+      if (s > bestScore) { bestScore = s; best = c; }
+    }
+    if (best && bestScore >= 0.5) {                 // 절반 이상 겹치면 같은 사건
+      best.items.push(it);
+      for (const w of toks) best.toks.add(w);
+    } else {
+      clusters.push({ toks, items: [it] });
+    }
+  }
+  const scored = clusters.map(c => {
+    // 대표 헤드라인: 부산 관련 우선 → 그중 가장 설명적인(적당히 긴) 제목
+    const busanFirst = c.items.filter(x => BUSAN_RE.test(x.t));
+    const cand = (busanFirst.length ? busanFirst : c.items)
+      .slice().sort((a, b) => Math.abs(38 - a.t.length) - Math.abs(38 - b.t.length));
+    const srcs = [...new Set(c.items.map(x => x.src))];
+    const busan = c.items.filter(x => BUSAN_RE.test(x.t + " " + (x.ctx || ""))).length;
+    return {
+      headline: cand[0].t,
+      count: c.items.length,
+      srcs,
+      busan,                                        // 부산 직접 연관 기사 수
+      items: c.items,
+      labels: [...c.toks].slice(0, 3),
+    };
+  });
+  // 정렬: 보도량 × 부산 연관 비중
+  scored.sort((a, b) => (b.count * (0.5 + b.busan / b.count)) - (a.count * (0.5 + a.busan / a.count)));
+  return scored.filter(s => s.count >= 2 || focus).slice(0, n);
 }
 
 // 특정 이슈(라벨)에 해당하는 기사들 — 제목이 라벨의 모든 어절을 포함하면 매칭, 최신순

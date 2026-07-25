@@ -2,7 +2,7 @@
 // env: NAVER_ID, NAVER_SECRET (NAVER API HUB), TG_BOT_TOKEN, TG_CHAT_ID
 // 상태: state.json (보낸 기사 키 목록) — 워크플로우가 커밋해 다음 실행에 이어짐
 import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
-import { loadDays, topIssues, formatRanking, articlesForLabel, kstDate } from "./insight.mjs";
+import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, formatStories, kstDate } from "./insight.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 
 const KEYWORD = "부산";
@@ -242,6 +242,20 @@ async function replyIssueLinks(token, chatId, label, dates) {
     text: `🔗 <b>${esc(label)}</b> 관련 기사 ${arts.length}건\n\n${lines.join("\n\n")}`,
   });
 }
+// 사건(스토리) 버튼 → 그 사건 기사 링크 모음. 헤드라인 앞부분으로 클러스터를 되찾는다.
+async function replyStoryLinks(token, chatId, headPrefix, dateStr) {
+  const items = loadDays([dateStr]);
+  const list = topStories(items, 30);
+  const hit = list.find(s => String(s.headline).startsWith(headPrefix))
+           || list.find(s => String(s.headline).slice(0, 12) === headPrefix.slice(0, 12));
+  const arts = (hit ? hit.items : []).slice(0, 15);
+  if (!arts.length) { await tg(token, "sendMessage", { chat_id: chatId, text: "해당 이슈의 기사를 찾지 못했습니다." }); return; }
+  const lines = arts.map((a, i) => `${i + 1}. <b>[${esc(a.src || "")}]</b> ${esc(String(a.t).slice(0, 55))}\n${a.url}`);
+  await tg(token, "sendMessage", {
+    chat_id: chatId, parse_mode: "HTML", disable_web_page_preview: true,
+    text: `🔗 <b>${esc(String(hit.headline).slice(0, 50))}</b>\n관련 기사 ${arts.length}건 (${dateStr})\n\n${lines.join("\n\n")}`,
+  });
+}
 // 봇별 명령·버튼 처리 (offsetKey로 봇마다 getUpdates 오프셋 분리)
 async function pollCommands(token, offsetKey) {
   try {
@@ -254,13 +268,15 @@ async function pollCommands(token, offsetKey) {
         const cq = u.callback_query;
         await tg(token, "answerCallbackQuery", { callback_query_id: cq.id });
         const chatId = cq.message?.chat?.id;
-        if (chatId && CHAT_IDS.includes(String(chatId)) && (cq.data || "").startsWith("iss:")) {
-          const rest = cq.data.slice(4);
+        const data = cq.data || "";
+        if (chatId && CHAT_IDS.includes(String(chatId)) && (data.startsWith("iss:") || data.startsWith("sty:"))) {
+          const rest = data.slice(4);
           const bar = rest.indexOf("|");
           const dateStr = bar > 0 ? rest.slice(0, bar) : kstDate(0);   // 콜백에 담긴 기준일
           const label = bar > 0 ? rest.slice(bar + 1) : rest;
           console.log(`버튼(${offsetKey}): ${dateStr} / ${label}`);
-          await replyIssueLinks(token, chatId, label, [dateStr]);
+          if (data.startsWith("sty:")) await replyStoryLinks(token, chatId, label, dateStr);
+          else await replyIssueLinks(token, chatId, label, [dateStr]);
         }
         continue;
       }
@@ -278,6 +294,46 @@ async function pollCommands(token, offsetKey) {
   } catch (e) { console.error(`명령 확인 실패(${offsetKey}):`, e.message); }
 }
 
+// ---- 스토리형 브리핑: 사건 단위 대표 헤드라인 + 전재수 섹션 ----
+// 버튼 콜백: "sty:<날짜>|<대표헤드라인 앞부분>" → 그 사건 관련 기사 링크
+function storyKeyboard(list, dateStr) {
+  const rows = list.slice(0, 10).map((s, i) => {
+    let cd = `sty:${dateStr}|${s.headline}`;
+    while (Buffer.from(cd, "utf8").length > 60) cd = cd.slice(0, -1);
+    return [{ text: `${i + 1}. ${String(s.headline).slice(0, 28)}…`, callback_data: cd }];
+  });
+  return rows.length ? { inline_keyboard: rows } : undefined;
+}
+async function sendStoryBrief(chatId, dateStr, headerLabel) {
+  const items = loadDays([dateStr]);
+  if (!items.length) {
+    await tg(BRIEF_TOKEN, "sendMessage", { chat_id: chatId, text: "해당 날짜의 아카이브가 없습니다." });
+    return;
+  }
+  const list = topStories(items, 10);
+  const msgs = formatStories(list, items.length, headerLabel);
+  for (let i = 0; i < msgs.length; i++) {
+    const body = { chat_id: chatId, text: msgs[i], parse_mode: "HTML", disable_web_page_preview: true };
+    if (i === msgs.length - 1) {
+      const kb = storyKeyboard(list, dateStr);
+      if (kb) { body.reply_markup = kb; body.text += "\n\n👇 이슈를 누르면 관련 기사 링크가 옵니다"; }
+    }
+    await tg(BRIEF_TOKEN, "sendMessage", body);
+    await new Promise(r => setTimeout(r, 300));
+  }
+  // 전재수 시장 관련 별도 섹션
+  const jjs = topStories(items, 5, { focus: "전재수" });
+  if (jjs.length) {
+    const lines = jjs.map((s, i) => `<b>${i + 1}. ${esc(String(s.headline).slice(0, 60))}</b>\n    📰 ${s.count}건`);
+    const cnt = items.filter(it => /전재수/.test(it.t + " " + (it.ctx || ""))).length;
+    await tg(BRIEF_TOKEN, "sendMessage", {
+      chat_id: chatId, parse_mode: "HTML", disable_web_page_preview: true,
+      text: `🔎 <b>전재수 시장 관련</b> (어제 ${cnt}건)\n\n${lines.join("\n\n")}`,
+      reply_markup: storyKeyboard(jjs, dateStr),
+    });
+  }
+}
+
 // ---- 아침 7시(KST = 22:00 UTC) 전날 TOP 10 브리핑 → 브리핑 전용 봇 ----
 async function maybeMorningBrief() {
   const now = new Date();
@@ -291,7 +347,7 @@ async function maybeMorningBrief() {
   const d = new Date(today + "T12:00:00Z");
   const days = ["일","월","화","수","목","금","토"];
   for (const chat of CHAT_IDS)
-    await replyRanking(BRIEF_TOKEN, chat, 10, [yesterday], `☀️ ${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 이슈 TOP 10`);
+    await sendStoryBrief(chat, yesterday, `☀️ ${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 주요 이슈`);
   console.log("☀️ 아침 브리핑 발송 완료 (브리핑 봇)");
   // 일요일 아침엔 주간 누적 리포트도 함께 (직전 한 주: 지난 일~토)
   if (d.getUTCDay() === 0) await sendWeeklyReport();
