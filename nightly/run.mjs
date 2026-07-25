@@ -21,7 +21,7 @@ const fstamp = dDash.replace(/-/g,"");
 
 const byName = Object.fromEntries(sources.map(s => [s.source, s]));
 const central = ["KBS 뉴스9","MBC 뉴스데스크","SBS 8뉴스","JTBC 뉴스룸","TV조선 뉴스9"];
-const busan   = ["KBS부산","부산MBC","KNN 뉴스아이","SBS 부산관련"];
+const busan   = ["KBS부산 뉴스9","부산MBC 뉴스데스크","KNN 뉴스아이","SBS 부산관련"];
 const paper   = ["국제신문","부산일보"];
 const cnt = n => byName[n]?.items.length || 0;
 const total = [...central, ...busan, ...paper].reduce((a,n)=>a+cnt(n), 0);

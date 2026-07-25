@@ -7,7 +7,7 @@
 //  KBS부산 뉴스9        → 지역API+클로징~오프닝 구간 절단+21시 이후 필터     [프로그램+날짜]
 //  SBS 8뉴스            → programMain.do?broad_date=YYYYMMDD              [완전한 날짜 지정]
 //  KNN 뉴스아이          → /news/program/newseye?date=YYYYMMDD             [완전한 날짜 지정]
-//  부산MBC              → 목록 각 항목의 날짜 표기로 필터                   [날짜 필터]
+//  부산MBC 뉴스데스크    → 목록 날짜필터 + 상세 게시시각 20~21시대만(뉴스데스크)  [프로그램+날짜]
 //  TV조선 뉴스9         → broadcast 뉴스9 전용판 + URL 날짜 필터            [프로그램+날짜]
 //  SBS 부산관련          → keywordList.do?keyword=부산 (프로그램 아님: 부산 태그 기사, 날짜 필터)
 //  MBC 뉴스데스크        → 다시보기 인덱스=최신 방송분. 페이지 날짜 검증 후 수집 [최신+검증]
@@ -110,7 +110,7 @@ async function withPage(url, fn, wait = 1500) {
 try {
   // KBS 중앙 + 부산 (공식 API, 날짜 완전 지정)
   try { push("중앙방송", "KBS 뉴스9", await kbs9Central()); } catch (e) { push("중앙방송","KBS 뉴스9",[],"API 실패: "+e.message); }
-  try { push("부산방송", "KBS부산", await kbsBusan()); } catch (e) { push("부산방송","KBS부산",[],"API 실패: "+e.message); }
+  try { push("부산방송", "KBS부산 뉴스9", await kbsBusan()); } catch (e) { push("부산방송","KBS부산 뉴스9",[],"API 실패: "+e.message); }
 
   // MBC 뉴스데스크 (최신 인덱스 + 날짜 검증)
   try {
@@ -197,8 +197,30 @@ try {
       });
       return [...m.values()];
     }, D_DASH), 2500);
-    push("부산방송", "부산MBC", items.slice(0, 35), items.length === 0 ? `목록에 ${D_DASH}자 기사 없음` : undefined);
-  } catch (e) { push("부산방송","부산MBC",[],"실패: "+e.message); }
+    // 부산MBC 목록은 프로그램 구분이 없다(뉴스데스크 리포트 + 아침·낮 기사 혼재).
+    // 상세 페이지의 게시 시각으로 판별: 뉴스데스크 방송분 = 20:00~21:59, 아침 기사 = 07시대.
+    let deskItems = items;
+    if (items.length) {
+      const timed = await withPage("https://busanmbc.co.kr/01_new/new01.asp", p => p.evaluate(async (list) => {
+        const out = [];
+        for (const it of list.slice(0, 40)) {
+          const idx = (String(it.url).match(/idx=(\d+)/) || [])[1];
+          let hm = "";
+          try {
+            const h = await (await fetch(`/01_new/new01_view.asp?idx=${idx}`)).text();
+            const m = h.replace(/<[^>]+>/g, " ").match(/\d{4}-\d{2}-\d{2}\s+(\d{1,2}):(\d{2})/);
+            if (m) hm = `${m[1].padStart(2, "0")}:${m[2]}`;
+          } catch {}
+          out.push({ ...it, hm });
+        }
+        return out;
+      }, items), 1500);
+      const desk = timed.filter(x => /^(20|21):/.test(x.hm));
+      if (desk.length) deskItems = desk.map(({ title, url }) => ({ title, url }));
+    }
+    push("부산방송", "부산MBC 뉴스데스크", deskItems.slice(0, 35),
+      deskItems.length === 0 ? `목록에 ${D_DASH}자 기사 없음` : undefined);
+  } catch (e) { push("부산방송","부산MBC 뉴스데스크",[],"실패: "+e.message); }
 
   // KNN 뉴스아이 (?date=)
   try {
