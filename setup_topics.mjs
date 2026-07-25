@@ -19,6 +19,23 @@ async function api(method, body) {
   return j.result;
 }
 
+// MODE=test : 이미 만들어진 주제(TG_TOPICS)에 확인용 메시지만 한 번 보낸다
+if (process.env.MODE === "test") {
+  const group = process.env.TG_TOPIC_GROUP;
+  const topics = JSON.parse(process.env.TG_TOPICS || "{}");
+  for (const [cat, tid] of Object.entries(topics)) {
+    try {
+      await api("sendMessage", {
+        chat_id: group, message_thread_id: tid,
+        text: `✅ ${cat} 방 연결 완료 — 이제 이 분야 기사만 여기로 옵니다.`,
+      });
+      console.log(`  ${cat}(${tid}) OK`);
+    } catch (e) { console.log(`  ${cat}(${tid}) 실패: ${e.message}`); }
+    await new Promise(r => setTimeout(r, 800));
+  }
+  process.exit(0);
+}
+
 // ① 그룹 chat id 찾기 — 우선 환경변수, 없으면 getUpdates에서 제목으로 탐색
 let chatId = process.env.GROUP_CHAT_ID || "";
 if (!chatId) {

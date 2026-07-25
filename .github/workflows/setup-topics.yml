@@ -7,6 +7,10 @@ on:
         description: "그룹 chat id (비우면 getUpdates에서 제목으로 탐색)"
         required: false
         default: ""
+      mode:
+        description: "test = 각 주제에 확인 메시지 발송"
+        required: false
+        default: ""
 
 jobs:
   setup:
@@ -20,4 +24,7 @@ jobs:
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           GROUP_CHAT_ID: ${{ inputs.chat_id }}
+          MODE: ${{ inputs.mode }}
+          TG_TOPIC_GROUP: ${{ secrets.TG_TOPIC_GROUP }}
+          TG_TOPICS: ${{ secrets.TG_TOPICS }}
         run: node setup_topics.mjs
