@@ -4,18 +4,9 @@
 const TOKEN = process.env.TG_BOT_TOKEN;
 const GROUP = process.env.TG_TOPIC_GROUP;
 
+// ⚠ editForumTopic은 그룹당 분당 호출 제한이 빡빡하다(13건 연속 시 마지막 2건이 429).
+//   그래서 남은 항목만 넣고 간격을 넉넉히 두고 재실행한다.
 const PLAN = [
-  { id: 4,  name: "정치",             icon: "5350387571199319521" }, // 🗳
-  { id: 5,  name: "경제",             icon: "5348227245599105972" }, // 💼
-  { id: 6,  name: "사회",             icon: "5377494501373780436" }, // 👮
-  { id: 7,  name: "문화·생활",        icon: "5350658016700013471" }, // 🎭
-  { id: 8,  name: "IT·과학",          icon: "5350554349074391003" }, // 💻
-  { id: 9,  name: "국제",             icon: "5348436127038579546" }, // ✈️
-  { id: 10, name: "스포츠",           icon: "5375159220280762629" }, // ⚽
-  { id: 11, name: "단독·속보",        icon: "5312016608254762256" }, // ⚡
-  { id: 79, name: "기타",             icon: "5434144690511290129" }, // 📰
-  { id: 69, name: "TV 뉴스 22:01",    icon: "5350513667144163474" }, // 📺
-  { id: 71, name: "아침 브리핑 07:00", icon: "5350424168615649565" }, // ⛅
   { id: 73, name: "시의회 입법예고",   icon: "5373251851074415873" }, // 📝
   { id: 75, name: "시의회 의안정보",   icon: "5350548830041415279" }, // 🏛
 ];
@@ -27,5 +18,5 @@ for (const t of PLAN) {
   });
   const j = await r.json();
   console.log(`  ${t.id} ${t.name}: ${j.ok ? "OK" : "실패 — " + j.description}`);
-  await new Promise(r => setTimeout(r, 900));
+  await new Promise(r => setTimeout(r, 45000));
 }
