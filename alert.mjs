@@ -449,8 +449,15 @@ async function sendWeeklyReport() {
   });
   const list = topIssues(items, 20);
   const head = `📚 <b>주간 누적 리포트</b>\n<b>${dates[0].replace(/-/g, ".")}(일) ~ ${dates[dates.length-1].replace(/-/g, ".")}(토)</b>\n총 <b>${items.length.toLocaleString()}건</b>\n\n<b>[일자별]</b>\n${perDay.join("\n")}`;
-  const rank = `📊 <b>주간 이슈 TOP 20</b>\n` + list.map((c, i) => `${String(i + 1).padStart(2)}. <b>${esc(c.label)}</b> — ${c.count}건`).join("\n");
-  for (const dest of destsFor("브리핑")) { await tg(BRIEF_TOKEN, "sendMessage", { ...dest, text: head, parse_mode: "HTML", disable_web_page_preview: true }); await tg(BRIEF_TOKEN, "sendMessage", { ...dest, text: rank, parse_mode: "HTML", disable_web_page_preview: true }); }
+  // 키워드 아래에 대표 기사·매체를 함께 (formatRanking이 맥락 줄까지 만들어 준다)
+  const rankMsgs = formatRanking(list, items.length, 20, `주간 이슈 TOP 20`);
+  for (const dest of destsFor("브리핑")) {
+    await tg(BRIEF_TOKEN, "sendMessage", { ...dest, text: head, parse_mode: "HTML", disable_web_page_preview: true });
+    for (const m of rankMsgs) {
+      await tg(BRIEF_TOKEN, "sendMessage", { ...dest, text: m, parse_mode: "HTML", disable_web_page_preview: true });
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
   console.log("📚 주간 누적 리포트 발송 완료");
 }
 

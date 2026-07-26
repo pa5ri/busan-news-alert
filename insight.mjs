@@ -49,20 +49,26 @@ export function loadDays(kstDates) {
   return items;
 }
 
-// items -> [{label, count, ex}] (빈도순, 2건 이상만)
+// items -> [{label, count, ex, srcs, head}] (빈도순, 2건 이상만)
+//   ex   = 처음 등장한 제목 (파편 정리용 키)
+//   head = 대표 제목 — 부산 관련을 우선하고 길이가 적당한 것 (맥락 표시용)
+//   srcs = 보도한 매체 목록
 export function topIssues(items, n = 10) {
   const uni = new Map(), bi = new Map();
-  const bump = (map, key, title) => {
-    if (!map.has(key)) map.set(key, { count: 0, ex: title });
-    map.get(key).count++;
+  const bump = (map, key, it) => {
+    if (!map.has(key)) map.set(key, { count: 0, ex: it.t, titles: [], srcs: new Set() });
+    const v = map.get(key);
+    v.count++;
+    if (v.titles.length < 40) v.titles.push(String(it.t || ""));   // 대표 제목 후보
+    if (it.src) v.srcs.add(it.src);
   };
   for (const it of items) {
     const toks = tokensOf(it.t);
     const seenU = new Set(), seenB = new Set();
-    toks.forEach(w => { if (!seenU.has(w)) { seenU.add(w); bump(uni, w, it.t); } });
+    toks.forEach(w => { if (!seenU.has(w)) { seenU.add(w); bump(uni, w, it); } });
     for (let i = 0; i < toks.length - 1; i++) {
       const b = toks[i] + " " + toks[i + 1];
-      if (!seenB.has(b)) { seenB.add(b); bump(bi, b, it.t); }
+      if (!seenB.has(b)) { seenB.add(b); bump(bi, b, it); }
     }
   }
   // 강한 2어절 이슈가 있으면 그 구성 단어(비슷한 빈도)는 중복이므로 숨김
@@ -81,15 +87,36 @@ export function topIssues(items, n = 10) {
   cands.sort((a, b) => b.count - a.count);
   // 상위 항목끼리 정리: 포함관계(돔구장⊂북항 돔구장) 또는 같은 대표기사에서 나온 파편은 1개만
   const out = [];
-  const usedEx = new Set();
+  const usedEx = new Set(), usedHead = new Set();
   for (const c of cands) {
     if (out.some(o => o.label.includes(c.label) || c.label.includes(o.label))) continue;
     if (usedEx.has(c.ex)) continue;
-    usedEx.add(c.ex);
-    out.push(c);
+    if (/^\d+$/.test(c.label)) continue;                       // "37"(낮 최고 37도) 같은 숫자 토큰은 이슈가 아님
+    const head = pickHeadline(c.titles || [], c.label);
+    if (usedHead.has(head)) continue;                          // 대표기사가 같으면 같은 사건 — 한 번만
+    usedEx.add(c.ex); usedHead.add(head);
+    out.push({
+      label: c.label, count: c.count, ex: c.ex, head,
+      srcs: [...(c.srcs || [])],
+    });
     if (out.length >= n) break;
   }
   return out;
+}
+
+// 대표 제목 선택 — ①그 키워드를 실제로 담고 있고 ②부산 관련이면 가점 ③길이 40자 근처
+// (키워드만 보면 무슨 일인지 모른다는 피드백 반영: 순위표에 이 한 줄을 함께 보여준다)
+function pickHeadline(titles, label) {
+  const parts = String(label).split(/\s+/).filter(Boolean);
+  const has = t => parts.every(p => t.includes(p));
+  const pool = titles.filter(has).length ? titles.filter(has) : titles;
+  let best = pool[0] || "", bestScore = -1e9;
+  for (const t of pool) {
+    const clean = t.replace(/^\[[^\]]{1,10}\]\s*/, "");           // 말머리 [단독] 등 제거
+    const score = (BUSAN_RE.test(clean) ? 12 : 0) - Math.abs(clean.length - 40) * 0.4;
+    if (score > bestScore) { bestScore = score; best = clean; }
+  }
+  return best;
 }
 
 // 스토리형 브리핑 메시지 (대표 헤드라인 중심)
@@ -114,10 +141,18 @@ export function formatStories(list, total, headerLabel, focusNote = "") {
 // 텔레그램 메시지 문자열 배열(4096자 제한 대응 분할)
 export function formatRanking(list, total, n, headerLabel) {
   const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const withEx = n <= 10;
+  // 키워드만으론 맥락을 알 수 없다는 피드백 반영 — 대표 기사 한 줄과 매체를 함께.
+  // TOP 50 이상은 줄 수가 너무 많아지므로 키워드만(순위 확인 용도).
+  const withEx = n <= 30;
   const lines = list.map((c, i) => {
-    const base = `${i + 1}. <b>${esc(c.label)}</b> — ${c.count}건`;
-    return withEx ? `${base}\n    └ ${esc(String(c.ex).slice(0, 44))}` : base;
+    const rank = String(i + 1).padStart(2);
+    const base = `${rank}. <b>${esc(c.label)}</b> — ${c.count}건`;
+    if (!withEx) return base;
+    const head = esc(String(c.head || c.ex || "").slice(0, 52));
+    // 매체명은 한글 이름(도메인맵 등재처)을 먼저 보여준다 — 도메인 그대로면 읽기 나쁨
+    const all = (c.srcs || []).slice().sort((a, b) => (a.includes(".") ? 1 : 0) - (b.includes(".") ? 1 : 0));
+    const srcs = all.slice(0, 2).join("·") + (all.length > 2 ? ` 외 ${all.length - 2}곳` : "");
+    return `${base}\n     └ ${head}${srcs ? `\n        <i>📰 ${esc(srcs)}</i>` : ""}`;
   });
   const header = `📊 <b>${headerLabel}</b> (기사 ${total}건 기준)`;
   const msgs = [];
