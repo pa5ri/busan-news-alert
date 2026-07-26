@@ -47,7 +47,7 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           # ⚠ 순서 주의: 먼저 커밋해야 한다. 변경분을 들고 pull --rebase 하면
           #   "cannot pull with rebase: You have unstaged changes"로 실패해 state 커밋이 누락된다.
-          git add state.json archive/ 2>/dev/null || git add state.json
+          git add state.json archive/ issues.json 2>/dev/null || git add state.json
           git diff --cached --quiet || git commit -m "state update [skip ci]"
           # 우리 state를 우선(-X theirs: 리베이스에서 재적용되는 우리 커밋 쪽)
           git pull --rebase -X theirs || git rebase --abort || true

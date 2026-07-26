@@ -2,7 +2,8 @@
 // env: NAVER_ID, NAVER_SECRET (NAVER API HUB), TG_BOT_TOKEN, TG_CHAT_ID
 // 상태: state.json (보낸 기사 키 목록) — 워크플로우가 커밋해 다음 실행에 이어짐
 import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
-import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, formatStories, kstDate } from "./insight.mjs";
+import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, formatStories, kstDate, tokensOf } from "./insight.mjs";
+import { loadLedger, saveLedger, updateLedger, composeContextBrief } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant } from "./category.mjs";
 
@@ -144,6 +145,64 @@ async function send(text) {
   return ok;
 }
 
+// ---- 보도 급증 감지 ----
+// 최근 1시간 전송분에서 같은 키워드(1~2어절)가 몰리면 단독·속보 방에 경보.
+// 기준: 1시간 내 SURGE_MIN건 이상 && 평소 하루치의 절반 이상 (평시 다빈도 주제의 오탐 방지).
+// 같은 키는 하루 1회만 (state.surgedKeys).
+const SURGE_MIN = Number(process.env.SURGE_MIN || 8);
+let recentSent = [];      // {ts, title, name, link, toks}
+let surgeBase = null;     // 키 → 최근 7일 하루 평균 보도량
+function initSurgeBase() {
+  surgeBase = new Map();
+  try {
+    const its = loadDays([...Array(7)].map((_, i) => kstDate(-1 - i)));
+    for (const it of its) {
+      const toks = tokensOf(it.t), seenK = new Set();
+      const add = k => { if (seenK.has(k)) return; seenK.add(k); surgeBase.set(k, (surgeBase.get(k) || 0) + 1); };
+      toks.forEach(add);
+      for (let i = 0; i < toks.length - 1; i++) add(toks[i] + " " + toks[i + 1]);
+    }
+    for (const [k, v] of surgeBase) surgeBase.set(k, v / 7);
+  } catch (e) { console.error("급증 기준선 계산 실패:", e.message); }
+}
+async function checkSurge() {
+  if (!surgeBase) initSurgeBase();
+  const now = Date.now();
+  recentSent = recentSent.filter(r => now - r.ts < 3600e3);
+  const today = kstDate(0);
+  if (state.surgedDate !== today) { state.surgedDate = today; state.surgedKeys = []; }
+  const counts = new Map();
+  for (const r of recentSent) {
+    const seenK = new Set();
+    const add = k => { if (seenK.has(k)) return; seenK.add(k); if (!counts.has(k)) counts.set(k, []); counts.get(k).push(r); };
+    r.toks.forEach(add);
+    for (let i = 0; i < r.toks.length - 1; i++) add(r.toks[i] + " " + r.toks[i + 1]);
+  }
+  const cands = [...counts.entries()]
+    .filter(([k, rs]) => rs.length >= Math.max(SURGE_MIN, (surgeBase.get(k) || 0) * 0.5)
+                      && !(state.surgedKeys || []).includes(k))
+    .sort((a, b) => b[1].length - a[1].length || b[0].length - a[0].length);
+  const picked = [];
+  for (const [k, rs] of cands) {
+    // 같은 기사군을 다른 키가 중복 보고하지 않게 — 이미 뽑힌 것과 기사 60% 이상 겹치면 흡수
+    if (picked.some(([, prs]) => rs.filter(r => prs.includes(r)).length >= rs.length * 0.6)) {
+      state.surgedKeys.push(k);
+      continue;
+    }
+    picked.push([k, rs]);
+    if (picked.length >= 2) break;
+  }
+  for (const [k, rs] of picked) {
+    state.surgedKeys.push(k);
+    const avg = surgeBase.get(k) || 0;
+    const sample = rs.slice(-3).map((r, i) => `${i + 1}. <b>[${esc(r.name)}]</b> ${esc(String(r.title).slice(0, 50))}\n${r.link}`);
+    await sendCat("단독·속보",
+      `📈 <b>보도 급증: ${esc(k)}</b>\n최근 1시간 ${rs.length}건${avg >= 1 ? ` — 평소 하루 ${Math.round(avg)}건 규모` : " — 평소 보도가 드물던 주제"}\n\n${sample.join("\n\n")}`);
+    console.log(`📈 급증 감지: ${k} — ${rs.length}건/시간`);
+  }
+  if (picked.length) saveState();
+}
+
 // ---- 아카이브 (인사이트 분석용 축적 — archive/YYYY-MM-DD.jsonl, KST 날짜 기준) ----
 function archive(it, pressName, cat) {
   try {
@@ -168,6 +227,8 @@ function saveState() {
     tgOffset: state.tgOffset || 0,
     briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
+    surgedDate: state.surgedDate || "",
+    surgedKeys: state.surgedKeys || [],
     ordSno: state.ordSno || 0,
     ordBill: state.ordBill || 0,
     ordBillSampled: state.ordBillSampled || false,
@@ -251,6 +312,7 @@ async function runOnce() {
     for (const g of sg.grp) seen.add(g.k);
     seenTitles.add(sg.nt);
     sent++;
+    recentSent.push({ ts: Date.now(), title, name, link, toks: tokensOf(title) });   // 급증 감지용
     // 단독·속보 중 '부산 사안'만 별도 토픽에도 (중요 기사 전용 방)
     const rec = { t: title, ctx, nlink: it.link, url: it.originallink };
     if (isScoop(title) && isBusanRelevant(rec)) {
@@ -405,16 +467,32 @@ async function sendStoryBrief(dest, dateStr, headerLabel) {
     await tg(BRIEF_TOKEN, "sendMessage", body);
     await new Promise(r => setTimeout(r, 300));
   }
-  // 전재수 시장 관련 별도 섹션
+  await sendJaesooSection(dest, dateStr, items);
+}
+
+// 전재수 시장 관련 별도 섹션 (연속성 브리핑·폴백 브리핑 공용)
+async function sendJaesooSection(dest, dateStr, items) {
   const jjs = topStories(items, 5, { focus: "전재수" });
-  if (jjs.length) {
-    const lines = jjs.map((s, i) => `<b>${i + 1}. ${esc(String(s.headline).slice(0, 60))}</b>\n    📰 ${s.count}건`);
-    const cnt = items.filter(it => /전재수/.test(it.t + " " + (it.ctx || ""))).length;
-    await tg(BRIEF_TOKEN, "sendMessage", {
-      ...dest, parse_mode: "HTML", disable_web_page_preview: true,
-      text: `🔎 <b>전재수 시장 관련</b> (어제 ${cnt}건)\n\n${lines.join("\n\n")}`,
-      reply_markup: storyKeyboard(jjs, dateStr),
-    });
+  if (!jjs.length) return;
+  const lines = jjs.map((s, i) => `<b>${i + 1}. ${esc(String(s.headline).slice(0, 60))}</b>\n    📰 ${s.count}건`);
+  const cnt = items.filter(it => /전재수/.test(it.t + " " + (it.ctx || ""))).length;
+  await tg(BRIEF_TOKEN, "sendMessage", {
+    ...dest, parse_mode: "HTML", disable_web_page_preview: true,
+    text: `🔎 <b>전재수 시장 관련</b> (어제 ${cnt}건)\n\n${lines.join("\n\n")}`,
+    reply_markup: storyKeyboard(jjs, dateStr),
+  });
+}
+
+// 연속성 브리핑 발송 (이슈 대장 기반) — 마지막 메시지에 이슈 버튼 부착
+async function sendContextBrief(dest, msgs, buttons, dateStr) {
+  for (let i = 0; i < msgs.length; i++) {
+    const body = { ...dest, text: msgs[i], parse_mode: "HTML", disable_web_page_preview: true };
+    if (i === msgs.length - 1 && buttons.length) {
+      const kb = storyKeyboard(buttons, dateStr);
+      if (kb) { body.reply_markup = kb; body.text += "\n\n👇 이슈를 누르면 관련 기사 링크가 옵니다"; }
+    }
+    await tg(BRIEF_TOKEN, "sendMessage", body);
+    await new Promise(r => setTimeout(r, 300));
   }
 }
 
@@ -430,9 +508,25 @@ async function maybeMorningBrief() {
   const yesterday = kstDate(-1);
   const d = new Date(today + "T12:00:00Z");
   const days = ["일","월","화","수","목","금","토"];
-  for (const dest of destsFor("브리핑"))
-    await sendStoryBrief(dest, yesterday, `☀️ ${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 주요 이슈`);
-  console.log("☀️ 아침 브리핑 발송 완료 (브리핑 봇)");
+  const header = `${today.slice(5).replace("-", "/")}(${days[d.getUTCDay()]}) 아침 브리핑 — 어제 부산 이슈 흐름`;
+  const items = loadDays([yesterday]);
+  // 이슈 대장 갱신(하루 1회, briefedFor 가드가 중복 방지) → 연속성 브리핑. 실패 시 기존 스토리 브리핑으로 폴백.
+  let ctx = null;
+  try {
+    const ledger = loadLedger();
+    updateLedger(ledger, yesterday, items);
+    saveLedger(ledger);
+    ctx = composeContextBrief(ledger, yesterday, items.length, header);
+  } catch (e) { console.error("이슈 대장 갱신 실패 — 스토리 브리핑으로 폴백:", e.message); }
+  for (const dest of destsFor("브리핑")) {
+    if (ctx && ctx.msgs.length) {
+      await sendContextBrief(dest, ctx.msgs, ctx.buttons, yesterday);
+      await sendJaesooSection(dest, yesterday, items);
+    } else {
+      await sendStoryBrief(dest, yesterday, `☀️ ${header}`);
+    }
+  }
+  console.log("☀️ 아침 브리핑 발송 완료 (연속성 브리핑)");
   // 일요일 아침엔 주간 누적 리포트도 함께 (직전 한 주: 지난 일~토)
   if (d.getUTCDay() === 0) await sendWeeklyReport();
 }
@@ -489,6 +583,7 @@ if (intervalSec > 0 && durationMin > 0) {
   let lastOrdCheck = 0;
   while (Date.now() < until) {
     try { await runOnce(); } catch (e) { console.error("폴링 오류:", e.message); }
+    try { await checkSurge(); } catch (e) { console.error("급증 감지 오류:", e.message); }
     await maybeTriggerNightly();
     await maybeMorningBrief();
     // 부산시의회 의정 체크는 로컬 PC(ord-local.mjs)로 이관됨 — 시의회 서버가 해외 IP(GitHub 러너)를 차단하기 때문.

@@ -28,7 +28,7 @@ function normToken(w) {
   return w;
 }
 
-function tokensOf(title) {
+export function tokensOf(title) {
   const t = String(title).replace(/\[[^\]]*\]/g, " ").replace(/["'"'…·]/g, " ");
   const raw = t.split(/[^0-9A-Za-z가-힣]+/).filter(Boolean);
   const toks = [];
@@ -169,7 +169,7 @@ export function formatRanking(list, total, n, headerLabel) {
 // 부산 지명·기관 (연관도 판정용)
 const BUSAN_RE = /부산|해운대|기장|사하구|사상구|영도|동래|금정|수영구|부산진|가덕|벡스코|낙동강|광안|자갈치|센텀|북항|사직|구덕|김해공항|에어부산|BNK/;
 // 같은 사건이면 한 덩어리로: 제목의 의미 토큰 집합이 많이 겹치면 동일 클러스터
-function keyTokens(title) {
+export function keyTokens(title) {
   return new Set(tokensOf(title).filter(w => w.length >= 2));
 }
 function overlap(a, b) {
@@ -213,6 +213,7 @@ export function topStories(items, n = 10, opts = {}) {
       busan,                                        // 부산 직접 연관 기사 수
       items: c.items,
       labels: [...c.toks].slice(0, 3),
+      toks: [...c.toks],                            // 이슈 대장(issues.mjs) 매칭용 전체 서명
     };
   });
   // 정렬: 보도량 × 부산 연관 비중
