@@ -179,7 +179,13 @@ try {
       });
       return [...m.values()];
     }, D_URL), 2000);
-    push("중앙방송", "TV조선 뉴스9", items.slice(0, 40), items.length === 0 ? `뉴스9 페이지에 ${D_DASH}자 리포트 없음` : undefined);
+    // 주말 0건은 정상: 뉴스9 게시판(ch19)은 평일 방영분만 게시된다
+    // (2026-07-26 일요일 실측 — 게시판에 금요일자 27건만 존재, 주말 뉴스 전용 게시판 자체가 없음)
+    const dow = new Date(D_DASH + "T12:00:00Z").getUTCDay();
+    const zeroNote = (dow === 0 || dow === 6)
+      ? "주말은 뉴스9 미편성 — 게시판에 주말 방영분이 올라오지 않음 (정상)"
+      : `뉴스9 페이지에 ${D_DASH}자 리포트 없음`;
+    push("중앙방송", "TV조선 뉴스9", items.slice(0, 40), items.length === 0 ? zeroNote : undefined);
   } catch (e) { push("중앙방송","TV조선 뉴스9",[],"실패: "+e.message); }
 
   // 부산MBC (목록 항목 날짜 필터)
@@ -238,19 +244,29 @@ try {
   } catch (e) { push("부산방송","KNN 뉴스아이",[],"실패: "+e.message); }
 
   // SBS 부산 키워드 (부산 관련 SBS 보도 — 항목 날짜 필터)
+  // ⚠ SBS 목록은 최근 기사에 절대날짜 대신 상대 표기("방금 전"·"N분 전"·"N시간 전"·"어제")를 섞어 쓴다
+  //   (2026-07-26 실측 — 당일 기사가 전부 상대 표기라 0건 오탐). 상대 표기를 날짜로 환산해 함께 매칭한다.
   try {
-    const items = await withPage("https://news.sbs.co.kr/news/keywordList.do?keyword=%EB%B6%80%EC%82%B0", p => p.evaluate((dDot) => {
+    const items = await withPage("https://news.sbs.co.kr/news/keywordList.do?keyword=%EB%B6%80%EC%82%B0", p => p.evaluate((dDot, nowKstMs) => {
+      const dayOf = ms => new Date(ms).toISOString().slice(0, 10).replace(/-/g, ".");
       const m = new Map();
       document.querySelectorAll('a[href*="endPage.do?news_id="]').forEach(a => {
         const box = a.closest('li,div') || a;
         const boxText = (box.textContent||'').replace(/\s+/g,' ');
         const id = (a.href.match(/news_id=(N\d+)/)||[])[1];
         let t = (a.textContent||'').replace(/\s+/g,' ').trim().replace(/^(동영상 기사|알림|속보)\s*/,'');
-        if (id && t.length > 8 && boxText.includes(dDot) && !m.has(id))
-          m.set(id, { title: t, url: `https://news.sbs.co.kr/news/endPage.do?news_id=${id}` });
+        if (!id || t.length <= 8 || m.has(id)) return;
+        let ok = boxText.includes(dDot);                          // 절대 표기 YYYY.MM.DD
+        if (!ok) {
+          const hr = boxText.match(/(\d+)\s*시간\s*전/);
+          if (/방금 전|(\d+)\s*분\s*전|오늘/.test(boxText)) ok = dayOf(nowKstMs) === dDot;
+          else if (hr) ok = dayOf(nowKstMs - Number(hr[1]) * 3600000) === dDot;
+          else if (/어제/.test(boxText)) ok = dayOf(nowKstMs - 86400000) === dDot;
+        }
+        if (ok) m.set(id, { title: t, url: `https://news.sbs.co.kr/news/endPage.do?news_id=${id}` });
       });
       return [...m.values()];
-    }, D_DOT));
+    }, D_DOT, Date.now() + 9 * 3600 * 1000));
     push("부산방송", "SBS 부산관련", items.slice(0, 25), items.length === 0 ? `${D_DOT}자 부산 태그 기사 없음` : undefined);
   } catch (e) { push("부산방송","SBS 부산관련",[],"실패: "+e.message); }
 

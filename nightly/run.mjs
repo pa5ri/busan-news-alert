@@ -27,10 +27,11 @@ const cnt = n => byName[n]?.items.length || 0;
 const total = [...central, ...busan, ...paper].reduce((a,n)=>a+cnt(n), 0);
 const line = n => {
   const s = byName[n];
-  const warn = s?.note && s.items.length === 0 ? " ⚠" : "";
+  const warn = s?.note && s.items.length === 0 && !/\(정상\)$/.test(s.note) ? " ⚠" : "";
   return `· ${n}: ${cnt(n)}건${warn}`;
 };
-const notes = sources.filter(s => s.note).map(s => `⚠ ${s.source}: ${s.note}`).join("\n");
+// "(정상)"으로 끝나는 노트는 안내(ℹ️)로, 나머지는 경고(⚠)로 표시
+const notes = sources.filter(s => s.note).map(s => `${/\(정상\)$/.test(s.note) ? "ℹ️" : "⚠"} ${s.source}: ${s.note}`).join("\n");
 const KW = data.keywords || [];
 const kwHits = sources.flatMap(s => s.items.filter(it => it.kw).map(it => ({ src: it.srcName || s.source, ...it })));
 const kwLine = KW.length ? `🔎 <b>${KW.join("·")} 언급: ${kwHits.length}건</b>` : "";
