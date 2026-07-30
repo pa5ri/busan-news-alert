@@ -38,6 +38,21 @@ const PRESS = {
 };
 // 통신사(중복 시 대표로 우선 선택)
 const WIRES = ["yna.co.kr", "newsis.com", "news1.kr", "yonhapnewstv.co.kr"];
+// ---- 전송 매체 필터 (2026-07-27 도입) ----
+// 실시간 방에는 메이저 매체만 전송하고, 나머지는 아카이브에만 기록한다(인사이트·브리핑·이슈대장은 전량 사용).
+// 실측: 전송량의 33%가 비메이저 — 필터로 하루 1,000건대 → 600~700건대.
+// 예외: 부산 관련 [단독]/[속보]는 매체 불문 통과(군소·전문지 단독 유실 방지).
+// 명단은 PRESS 맵의 한글 표기와 정확히 일치해야 한다.
+const MAJOR = new Set([
+  "연합뉴스", "뉴시스", "뉴스1", "연합뉴스TV",                                    // 통신
+  "KBS", "MBC", "SBS", "JTBC", "TV조선", "채널A", "MBN", "YTN", "한국경제TV",      // 방송
+  "조선일보", "중앙일보", "동아일보", "한겨레", "경향신문", "국민일보",             // 중앙지
+  "문화일보", "세계일보", "서울신문", "한국일보",
+  "매일경제", "한국경제", "머니투데이", "이데일리", "아시아경제",                   // 경제지
+  "헤럴드경제", "파이낸셜뉴스", "전자신문", "조선비즈",
+  "부산일보", "국제신문", "KNN", "부산MBC",                                        // 부산 지역
+  "노컷뉴스", "오마이뉴스",                                                        // 기타 주요
+]);
 // 기계적 소음(날씨 묶음·운세·로또·부고·시황 등) — 본문매치 기사에만 적용
 const NOISE = /오늘의 날씨|날씨예보|\[날씨|운세|로또|\[?부고\]?|\[인사\]|주요 ?일정|코스피|코스닥|환율 마감|부동산 시황/;
 // 연예 카테고리 제외: 네이버 연예판 링크·연예 섹션코드(sid=106)·연예 전문매체
@@ -294,7 +309,7 @@ async function runOnce() {
   const carry = freshGroups.length - sendGroups.length;
   console.log(`[${new Date().toISOString().slice(11,19)}] 수집 ${items.length} | 신규 ${freshGroups.length} | 전송예정 ${sendGroups.length}${carry > 0 && !firstRun ? ` | 이월 ${carry}` : ""}${firstRun ? " (최초 실행)" : ""}`);
 
-  let sent = 0;
+  let sent = 0, recorded = 0;
   for (const sg of sendGroups) {
     const it = sg.pick;
     const { name } = pressInfo(it.originallink || it.link);
@@ -303,9 +318,22 @@ async function runOnce() {
     const ctx = strip(it.description).slice(0, 300);
     // 분야 판별 → 해당 분야 전용 봇으로 발송 (미설정 분야는 통합봇)
     const cat = categorize({ t: title, ctx, nlink: it.link, url: it.originallink });
+    const rec = { t: title, ctx, nlink: it.link, url: it.originallink };
+    const scoopPass = isScoop(title) && isBusanRelevant(rec);
+
+    // 매체 필터: 비메이저는 전송 없이 기록만 (아카이브·급증 감지·이슈 대장에는 전량 반영)
+    if (!MAJOR.has(name) && !scoopPass) {
+      for (const g of sg.grp) seen.add(g.k);
+      seenTitles.add(sg.nt);
+      recentSent.push({ ts: Date.now(), title, name, link, toks: tokensOf(title) });
+      archive(it, name, cat);
+      recorded++;
+      continue;
+    }
+
     const msg = `${CAT_EMOJI[cat] || "📰"} <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
     if (!await sendCat(cat, msg)) {           // 실패분은 미표시로 남겨 다음 회차에 재시도
-      console.error(`이번 회차 중단 — ${sendGroups.length - sent}건은 다음 회차로 이월`);
+      console.error(`이번 회차 중단 — 잔여분은 다음 회차로 이월`);
       break;
     }
     // 전송이 확인된 뒤에 '보낸 기사'로 기록 (같은 제목 계열 전체를 함께 표시)
@@ -314,18 +342,18 @@ async function runOnce() {
     sent++;
     recentSent.push({ ts: Date.now(), title, name, link, toks: tokensOf(title) });   // 급증 감지용
     // 단독·속보 중 '부산 사안'만 별도 토픽에도 (중요 기사 전용 방)
-    const rec = { t: title, ctx, nlink: it.link, url: it.originallink };
-    if (isScoop(title) && isBusanRelevant(rec)) {
+    if (scoopPass) {
       const tag = isExclusive(title) ? "단독" : "속보";
       const clean = title.replace(/\[(단독|속보)\]\s*/g, "").trim();
       await sendCat("단독·속보",
         `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     archive(it, name, cat);
-    if (sent % 10 === 0) saveState();   // 대량 이월 전송 중 잡이 죽어도 중복 재전송을 최소화
+    if ((sent + recorded) % 10 === 0) saveState();   // 대량 처리 중 잡이 죽어도 중복 재전송을 최소화
   }
+  if (recorded) console.log(`  매체 필터: 전송 ${sent} · 기록만 ${recorded}`);
   if (!firstRun && carry > 0)
-    await send(`⏳ 신규 ${freshGroups.length}건 중 ${sent}건 전송 — 나머지는 이어서 전송됩니다.`);
+    await send(`⏳ 신규 ${freshGroups.length}건 중 ${sent}건 전송 — 나머지는 이어서 처리됩니다.`);
 
   firstRun = false;
   saveState();
