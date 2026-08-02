@@ -3,7 +3,7 @@
 // 상태: state.json (보낸 기사 키 목록) — 워크플로우가 커밋해 다음 실행에 이어짐
 import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, formatStories, kstDate, tokensOf } from "./insight.mjs";
-import { loadLedger, saveLedger, updateLedger, composeContextBrief } from "./issues.mjs";
+import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant } from "./category.mjs";
 
@@ -410,17 +410,61 @@ async function replyIssueLinks(token, dest, label, dates) {
   });
 }
 // 사건(스토리) 버튼 → 그 사건 기사 링크 모음. 헤드라인 앞부분으로 클러스터를 되찾는다.
+// ⚠ 하루 1건짜리 사건은 클러스터(2건↑만 생성)에 없다 — 제목 부분일치 폴백으로 회수 (2026-08-02 버그 수정)
 async function replyStoryLinks(token, dest, headPrefix, dateStr) {
   const items = loadDays([dateStr]);
-  const list = topStories(items, 30);
+  const list = topStories(items, 100);
   const hit = list.find(s => String(s.headline).startsWith(headPrefix))
            || list.find(s => String(s.headline).slice(0, 12) === headPrefix.slice(0, 12));
-  const arts = (hit ? hit.items : []).slice(0, 15);
+  let arts = (hit ? hit.items : []).slice(0, 15);
+  let head = hit ? hit.headline : headPrefix;
+  if (!arts.length) {
+    // 폴백: 원문 제목에서 앞 10자 부분일치 (콜백 절단·[말머리] 제거를 견디는 최소 검색)
+    const chunk = String(headPrefix).slice(0, 10);
+    const seenU = new Set();
+    arts = items.filter(it => {
+      if (!String(it.t).includes(chunk)) return false;
+      const k = (it.url || it.t).replace(/[?#].*$/, "");
+      if (seenU.has(k)) return false;
+      seenU.add(k);
+      return true;
+    }).slice(0, 15);
+    if (arts.length) head = arts[0].t;
+  }
   if (!arts.length) { await tg(token, "sendMessage", { ...dest, text: "해당 이슈의 기사를 찾지 못했습니다." }); return; }
   const lines = arts.map((a, i) => `${i + 1}. <b>[${esc(a.src || "")}]</b> ${esc(String(a.t).slice(0, 55))}\n${a.url}`);
   await tg(token, "sendMessage", {
     ...dest, parse_mode: "HTML", disable_web_page_preview: true,
-    text: `🔗 <b>${esc(String(hit.headline).slice(0, 50))}</b>\n관련 기사 ${arts.length}건 (${dateStr})\n\n${lines.join("\n\n")}`,
+    text: `🔗 <b>${esc(String(head).slice(0, 50))}</b>\n관련 기사 ${arts.length}건 (${dateStr})\n\n${lines.join("\n\n")}`,
+  });
+}
+
+// 이슈 대장 버튼(led:<날짜>|<대장 인덱스>) → 그 이슈의 기사 링크 + 흐름 요약
+// 헤드라인 재검색이 아니라 대장을 직접 참조하므로 1건짜리 이슈도 항상 찾는다.
+async function replyLedgerLinks(token, dest, idxStr, dateStr) {
+  const ledger = loadLedger();
+  const iss = ledger.issues[Number(idxStr)];
+  if (!iss) { await tg(token, "sendMessage", { ...dest, text: "이슈 대장에서 항목을 찾지 못했습니다." }); return; }
+  let arts = issueArticles(iss, loadDays([dateStr]));
+  let day = dateStr;
+  if (!arts.length && iss.lastSeen && iss.lastSeen !== dateStr) {   // 그날 기사가 없으면 마지막 보도일로
+    arts = issueArticles(iss, loadDays([iss.lastSeen]));
+    day = iss.lastSeen;
+  }
+  const cum = Object.values(iss.daily).reduce((a, b) => a + b, 0);
+  const flow = `${sparkline(iss, day)} 누적 ${cum}건 · 상태 ${iss.status}`;
+  if (!arts.length) {
+    await tg(token, "sendMessage", {
+      ...dest, parse_mode: "HTML",
+      text: `<b>${esc(iss.label)}</b>\n${flow}\n\n${day}자 관련 기사를 찾지 못했습니다.`,
+    });
+    return;
+  }
+  arts.sort((a, b) => new Date(b.pub || 0) - new Date(a.pub || 0));
+  const lines = arts.slice(0, 15).map((a, i) => `${i + 1}. <b>[${esc(a.src || "")}]</b> ${esc(String(a.t).slice(0, 55))}\n${a.url}`);
+  await tg(token, "sendMessage", {
+    ...dest, parse_mode: "HTML", disable_web_page_preview: true,
+    text: `🔗 <b>${esc(String(iss.label).slice(0, 50))}</b>\n${flow}\n\n${lines.join("\n\n")}`,
   });
 }
 // 명령·버튼을 받아줄 방: 기존 개인방 + 통합 그룹
@@ -438,7 +482,7 @@ async function pollCommands(token, offsetKey) {
         await tg(token, "answerCallbackQuery", { callback_query_id: cq.id });
         const chatId = cq.message?.chat?.id;
         const data = cq.data || "";
-        if (chatId && allowedChat(chatId) && (data.startsWith("iss:") || data.startsWith("sty:"))) {
+        if (chatId && allowedChat(chatId) && (data.startsWith("iss:") || data.startsWith("sty:") || data.startsWith("led:"))) {
           // 통합 그룹에서 눌렀으면 그 주제 안에서 답한다
           const dest = { chat_id: chatId };
           if (cq.message?.message_thread_id) dest.message_thread_id = cq.message.message_thread_id;
@@ -446,8 +490,9 @@ async function pollCommands(token, offsetKey) {
           const bar = rest.indexOf("|");
           const dateStr = bar > 0 ? rest.slice(0, bar) : kstDate(0);   // 콜백에 담긴 기준일
           const label = bar > 0 ? rest.slice(bar + 1) : rest;
-          console.log(`버튼(${offsetKey}): ${dateStr} / ${label}`);
-          if (data.startsWith("sty:")) await replyStoryLinks(token, dest, label, dateStr);
+          console.log(`버튼(${offsetKey}): ${data.slice(0, 4)} ${dateStr} / ${label}`);
+          if (data.startsWith("led:")) await replyLedgerLinks(token, dest, label, dateStr);
+          else if (data.startsWith("sty:")) await replyStoryLinks(token, dest, label, dateStr);
           else await replyIssueLinks(token, dest, label, [dateStr]);
         }
         continue;
@@ -512,11 +557,17 @@ async function sendJaesooSection(dest, dateStr, items) {
 }
 
 // 연속성 브리핑 발송 (이슈 대장 기반) — 마지막 메시지에 이슈 버튼 부착
+// 버튼은 led:<날짜>|<대장 인덱스> — 헤드라인 재검색(sty:)과 달리 1건짜리 이슈도 확실히 되찾는다
+function ledgerKeyboard(buttons, dateStr) {
+  const rows = buttons.slice(0, 10).map((b, i) =>
+    [{ text: `${i + 1}. ${String(b.headline).slice(0, 28)}…`, callback_data: `led:${dateStr}|${b.idx}` }]);
+  return rows.length ? { inline_keyboard: rows } : undefined;
+}
 async function sendContextBrief(dest, msgs, buttons, dateStr) {
   for (let i = 0; i < msgs.length; i++) {
     const body = { ...dest, text: msgs[i], parse_mode: "HTML", disable_web_page_preview: true };
     if (i === msgs.length - 1 && buttons.length) {
-      const kb = storyKeyboard(buttons, dateStr);
+      const kb = ledgerKeyboard(buttons, dateStr);
       if (kb) { body.reply_markup = kb; body.text += "\n\n👇 이슈를 누르면 관련 기사 링크가 옵니다"; }
     }
     await tg(BRIEF_TOKEN, "sendMessage", body);

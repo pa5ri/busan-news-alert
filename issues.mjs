@@ -5,7 +5,7 @@
 //   ③ 씨앗(seeded) 이슈 = 추적 키워드로 집계(스킬의 '추적 쿼리'), 유기(organic) 이슈 = 클러스터에서 자동 생성.
 // 저장: issues.json (워크플로우가 state.json과 함께 커밋)
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { topStories } from "./insight.mjs";
+import { topStories, keyTokens } from "./insight.mjs";
 
 const FILE = "issues.json";
 const NEW_MIN = 5;        // 유기 이슈 신설 최소 보도량(하루 클러스터 크기)
@@ -153,8 +153,22 @@ function trendOf(iss, dateStr) {
 }
 
 /**
+ * 이슈에 속하는 기사들 (버튼 딥링크용) — 씨앗은 키워드로, 유기는 토큰 서명으로 매칭.
+ * 클러스터를 거치지 않으므로 하루 1건짜리 이슈도 찾는다 (topStories는 2건 미만 클러스터를 버림).
+ */
+export function issueArticles(iss, items) {
+  if ((iss.keywords || []).length) return items.filter(it => kwHit(it, iss.keywords));
+  return items.filter(it => {
+    const toks = keyTokens(it.t);
+    let shared = 0;
+    for (const w of toks) if (iss.tokens.includes(w)) shared++;
+    return shared >= 3 || (shared >= 2 && shared / Math.max(1, Math.min(toks.size, iss.tokens.length)) >= 0.45);
+  });
+}
+
+/**
  * 대장 상태만으로 그날의 연속성 브리핑을 만든다 (updateLedger 이후 호출).
- * @returns { msgs: string[], buttons: [{headline}] }
+ * @returns { msgs: string[], buttons: [{headline, idx}] } — idx = ledger.issues 배열 인덱스(led: 콜백용)
  */
 export function composeContextBrief(ledger, dateStr, total, headerLabel) {
   const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -215,6 +229,6 @@ export function composeContextBrief(ledger, dateStr, total, headerLabel) {
 
   const buttons = [...cont.slice(0, 6), ...fresh.slice(0, 3), ...rekindled.slice(0, 2)]
     .filter(iss => iss.lastHead)
-    .map(iss => ({ headline: iss.lastHead }));
+    .map(iss => ({ headline: iss.lastHead, idx: ledger.issues.indexOf(iss) }));
   return { msgs, buttons };
 }
