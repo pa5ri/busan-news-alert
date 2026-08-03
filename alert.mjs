@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } fr
 import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, formatStories, kstDate, tokensOf } from "./insight.mjs";
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
+import { checkEditorials } from "./editorials.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant } from "./category.mjs";
 
 const KEYWORD = "부산";
@@ -244,6 +245,8 @@ function saveState() {
     briefedFor: state.briefedFor || "",
     surgedDate: state.surgedDate || "",
     surgedKeys: state.surgedKeys || [],
+    edSeen: state.edSeen || [],
+    edInit: state.edInit || false,
     ordSno: state.ordSno || 0,
     ordBill: state.ordBill || 0,
     ordBillSampled: state.ordBillSampled || false,
@@ -659,10 +662,19 @@ const durationMin = Number(process.env.POLL_DURATION_MIN || 0);
 if (intervalSec > 0 && durationMin > 0) {
   const until = Date.now() + durationMin * 60 * 1000;
   console.log(`반복 모드: ${intervalSec}초 간격, ${durationMin}분간`);
-  let lastOrdCheck = 0;
+  let lastOrdCheck = 0, lastEdCheck = 0;
   while (Date.now() < until) {
     try { await runOnce(); } catch (e) { console.error("폴링 오류:", e.message); }
     try { await checkSurge(); } catch (e) { console.error("급증 감지 오류:", e.message); }
+    // 신문 사설 확인 (55분 간격 — 다음날 지면 사설이 저녁부터 올라옴)
+    if (Date.now() - lastEdCheck > 55 * 60 * 1000) {
+      lastEdCheck = Date.now();
+      try {
+        const n = await checkEditorials(state, text => sendCat("사설", text));
+        if (n) console.log(`✍️ 사설 ${n}건 발송`);
+        saveState();
+      } catch (e) { console.error("사설 확인 오류:", e.message); }
+    }
     await maybeTriggerNightly();
     await maybeMorningBrief();
     // 부산시의회 의정 체크는 로컬 PC(ord-local.mjs)로 이관됨 — 시의회 서버가 해외 IP(GitHub 러너)를 차단하기 때문.
