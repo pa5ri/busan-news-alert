@@ -7,24 +7,52 @@
 const UA = { "user-agent": "Mozilla/5.0" };
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const unesc = s => String(s).replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+const WD = ["일", "월", "화", "수", "목", "금", "토"];
+
+// 해외 IP(GitHub 러너)에서 국내 언론사 접속이 간헐 실패한다(실측: 하루 4회 fetch failed,
+// 같은 시각 국내 IP는 4/4 성공). 한 회차 안에서 재시도해 다음 주기(55분)까지 밀리지 않게 한다.
+async function getBuf(url, tries = 3) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(url, { headers: UA, signal: AbortSignal.timeout(20000) });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return Buffer.from(await r.arrayBuffer());
+    } catch (e) {
+      last = e;
+      if (i < tries - 1) await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+  throw last;
+}
+
+// 부산일보 지면일 = code 타임스탬프 + 1일 (사설은 전날 17~18시에 등록됨 — 실측 9건 전부)
+//   예: code 2026080417581778927(8/4 17:58 등록) → 기사 원문 표기 2026-08-05 = 8/5 지면
+// 국제신문 key(20260805.xxx)는 이미 지면일이라 보정 불필요. 두 신문 표기를 지면일로 통일한다.
+function busanPaperDate(code) {
+  const y = +code.slice(0, 4), m = +code.slice(4, 6), d = +code.slice(6, 8), hh = +code.slice(8, 10);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (hh >= 12) dt.setUTCDate(dt.getUTCDate() + 1);
+  return dt.toISOString().slice(0, 10).replace(/-/g, "");
+}
 
 export async function fetchEditorials() {
   const out = [];
   try {
-    const h = await (await fetch("https://www.busan.com/opinionmain/1", { headers: UA })).text();
+    const h = (await getBuf("https://www.busan.com/opinionmain/1")).toString("utf8");
     const seen = new Set();
     for (const m of h.matchAll(/href="(\/view\/busan\/view\.php\?code=(\d{10,})[^"]*)"[^>]*>([^<]{8,90})</g)) {
       const t = unesc(m[3].trim());
       if (!/^\[사설\]/.test(t)) continue;
       if (seen.has(m[2])) continue;
       seen.add(m[2]);
-      out.push({ src: "부산일보", key: "b" + m[2], paperDate: m[2].slice(0, 8),
+      out.push({ src: "부산일보", key: "b" + m[2], paperDate: busanPaperDate(m[2]),
                  t: t.replace(/^\[사설\]\s*/, ""), url: "https://www.busan.com" + m[1] });
     }
   } catch (e) { console.error("부산일보 사설 수집 실패:", e.message); }
   try {
-    const r = await fetch("http://www.kookje.co.kr/news2011/asp/list.asp?code=1710", { headers: UA });
-    const h = new TextDecoder("euc-kr").decode(Buffer.from(await r.arrayBuffer()));
+    const h = new TextDecoder("euc-kr").decode(
+      await getBuf("https://www.kookje.co.kr/news2011/asp/list.asp?code=1710"));
     const seen = new Set();
     for (const m of h.matchAll(/href="([^"]*newsbody\.asp\?[^"]*key=(\d{8}\.\d+)[^"]*kid=1710[^"]*)"[^>]*>([^<]{8,90})</g)) {
       if (seen.has(m[2])) continue;
@@ -65,7 +93,12 @@ export async function checkEditorials(state, send) {
   return sent;
 }
 
+// 라벨은 두 신문 모두 '지면일' 기준 (부산일보는 등록일이 아니라 보정된 날짜)
 const fmt = e => {
-  const d = e.paperDate ? ` <i>(${e.paperDate.slice(4, 6)}/${e.paperDate.slice(6, 8)}자)</i>` : "";
+  let d = "";
+  if (e.paperDate) {
+    const wd = WD[new Date(`${e.paperDate.slice(0, 4)}-${e.paperDate.slice(4, 6)}-${e.paperDate.slice(6, 8)}T12:00:00Z`).getUTCDay()];
+    d = ` <i>(${e.paperDate.slice(4, 6)}/${e.paperDate.slice(6, 8)}(${wd})자 지면)</i>`;
+  }
   return `✍️ <b>[${e.src} 사설]</b> ${esc(e.t)}${d}\n${e.url}`;
 };
