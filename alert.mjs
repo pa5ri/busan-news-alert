@@ -583,8 +583,10 @@ async function maybeMorningBrief() {
   const now = new Date();
   const utcMins = now.getUTCHours() * 60 + now.getUTCMinutes();
   const today = kstDate(0);
-  if (utcMins < 22 * 60 || utcMins >= 23 * 60) return;                   // 22:00~22:59 UTC = 아침 7시대 KST
-  if (state.briefedFor === today) return;
+  // BRIEF_NOW=1 이면 시간대 무시하고 1회 발송 — 러너 장애로 7시대를 놓쳤을 때 수동 복구용
+  const force = process.env.BRIEF_NOW === "1";
+  if (!force && (utcMins < 22 * 60 || utcMins >= 23 * 60)) return;       // 22:00~22:59 UTC = 아침 7시대 KST
+  if (state.briefedFor === today) return;                                // 이미 보냈으면 강제여도 재발송 안 함
   state.briefedFor = today;
   saveState();
   const yesterday = kstDate(-1);

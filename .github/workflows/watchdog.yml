@@ -1,0 +1,36 @@
+name: 루프 감시(자가연쇄 복구)
+
+# 왜 필요한가 (2026-08-06 장애):
+#   러너 배정 실패로 잡이 "스텝 0개 상태로 15분 뒤 취소"되면, 마지막 스텝인 자가 연쇄
+#   (`gh workflow run alert.yml`)가 아예 실행되지 않아 루프가 영구히 끊긴다.
+#   실제로 7시간 정지 → 아침 7시 브리핑 미발송. alert.yml의 */15 크론도 그 사이 한 번도
+#   발화하지 않았다(이 계정 크론 불신 이력).
+#   이 워크플로는 30초짜리 초경량 잡이라 러너 배정 성공률이 높고, 폴링 잡이 없으면 되살린다.
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 폴링 루프 생존 확인 후 필요시 재가동
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          n=$(gh api "repos/$REPO/actions/workflows/alert.yml/runs?status=in_progress" -q '.total_count')
+          q=$(gh api "repos/$REPO/actions/workflows/alert.yml/runs?status=queued" -q '.total_count')
+          echo "실행 중 $n건 / 대기 $q건"
+          if [ "$n" = "0" ] && [ "$q" = "0" ]; then
+            echo "⚠ 폴링 루프 없음 — 재가동"
+            gh workflow run alert.yml -R "$REPO"
+          else
+            echo "정상 가동 중"
+          fi

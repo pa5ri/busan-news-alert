@@ -3,7 +3,12 @@ name: 부산 뉴스속보 (2분 폴링)
 on:
   schedule:
     - cron: "*/15 * * * *"   # 보험용 기상 시도 (크론이 작동하게 되면 자동 재점화 역할)
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      brief_now:
+        description: "아침 브리핑을 지금 즉시 발송(7시대를 놓쳤을 때)"
+        required: false
+        default: ""
 
 concurrency:
   group: alert
@@ -35,6 +40,7 @@ jobs:
           TG_ORD_TOKEN: ${{ secrets.TG_ORD_TOKEN }}
           TG_BILL_TOKEN: ${{ secrets.TG_BILL_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          BRIEF_NOW: ${{ inputs.brief_now == 'true' && '1' || '' }}
           POLL_INTERVAL_SEC: "120"
           POLL_DURATION_MIN: "58"
           GH_TOKEN: ${{ github.token }}
