@@ -83,6 +83,29 @@ export function isBusanRelevant(item) {
   return hits >= 2;
 }
 
+// ── 별도 관리 유형: 인터뷰(시장) / 르포 / 기고 ──
+// 분야 방과 별개로 전용 방에도 보낸다. 물량이 적어(3주간 인터뷰5·르포32·기고16건)
+// 매체 필터(메이저만 전송)를 우회한다 — 시장 인터뷰는 군소·전문지 비중이 오히려 높다(실측).
+const RE_INTERVIEW = /인터뷰/;                              // 제목에 '인터뷰' + 시장 지칭이 함께 있어야 함
+const RE_MAYOR     = /전재수|부산시장/;
+const RE_REPORTAGE = /\[[^\]]{0,12}르포[^\]]{0,12}\]/;      // [르포] [현장르포] [○○ 현장르포]
+const RE_CONTRIB   = /\[[^\]]{0,8}기고[^\]]{0,8}\]/;        // [기고] [특별기고]
+const LOCAL_SRC    = /부산일보|국제신문|KNN|부산MBC/;        // 부산 지역지는 그 자체로 지역 사안
+
+/**
+ * 별도 방으로 뺄 유형 판별. 해당 없으면 null.
+ * 르포·기고는 전국물이 섞이므로 부산 관련성 판정을 통과해야 한다(실측 제외율 르포 20%·기고 30%).
+ */
+export function specialKind(item) {
+  const t = String(item.t || item.title || "");
+  if (RE_INTERVIEW.test(t) && RE_MAYOR.test(t)) return "인터뷰";
+  const local = LOCAL_SRC.test(String(item.src || "")) || isBusanRelevant(item);
+  if (RE_REPORTAGE.test(t) && local) return "르포";
+  if (RE_CONTRIB.test(t) && local) return "기고";
+  return null;
+}
+export const SPECIAL_EMOJI = { "인터뷰": "🎤", "르포": "📷", "기고": "🖋" };
+
 // 분야별 이모지 (메시지 머리표)
 export const CAT_EMOJI = {
   "정치": "🗳", "경제": "💼", "사회": "👮", "생활/문화": "🏡",

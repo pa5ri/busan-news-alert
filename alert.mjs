@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI } from "./category.mjs";
 
 const KEYWORD = "부산";
 // 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
@@ -321,11 +321,13 @@ async function runOnce() {
     const ctx = strip(it.description).slice(0, 300);
     // 분야 판별 → 해당 분야 전용 봇으로 발송 (미설정 분야는 통합봇)
     const cat = categorize({ t: title, ctx, nlink: it.link, url: it.originallink });
-    const rec = { t: title, ctx, nlink: it.link, url: it.originallink };
+    const rec = { t: title, ctx, nlink: it.link, url: it.originallink, src: name };
     const scoopPass = isScoop(title) && isBusanRelevant(rec);
+    const special = specialKind(rec);          // 인터뷰(시장)·르포·기고 — 전용 방 추가 발송
 
     // 매체 필터: 비메이저는 전송 없이 기록만 (아카이브·급증 감지·이슈 대장에는 전량 반영)
-    if (!MAJOR.has(name) && !scoopPass) {
+    // 단독·속보와 별도 관리 유형은 매체 불문 통과 (군소 매체 비중이 높은 유형)
+    if (!MAJOR.has(name) && !scoopPass && !special) {
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks: tokensOf(title) });
@@ -350,6 +352,12 @@ async function runOnce() {
       const clean = title.replace(/\[(단독|속보)\]\s*/g, "").trim();
       await sendCat("단독·속보",
         `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…`);
+    }
+    // 인터뷰(시장)·르포·기고 전용 방
+    if (special) {
+      const clean2 = title.replace(/^\[[^\]]{0,12}(인터뷰|르포|기고)[^\]]{0,12}\]\s*/, "").trim() || title;
+      await sendCat(special,
+        `${SPECIAL_EMOJI[special]} <b>[${special}]</b> <b>${esc(clean2)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     archive(it, name, cat);
     if ((sent + recorded) % 10 === 0) saveState();   // 대량 처리 중 잡이 죽어도 중복 재전송을 최소화
@@ -562,8 +570,9 @@ async function sendJaesooSection(dest, dateStr, items) {
 // 연속성 브리핑 발송 (이슈 대장 기반) — 마지막 메시지에 이슈 버튼 부착
 // 버튼은 led:<날짜>|<대장 인덱스> — 헤드라인 재검색(sty:)과 달리 1건짜리 이슈도 확실히 되찾는다
 function ledgerKeyboard(buttons, dateStr) {
-  const rows = buttons.slice(0, 10).map((b, i) =>
-    [{ text: `${i + 1}. ${String(b.headline).slice(0, 28)}…`, callback_data: `led:${dateStr}|${b.idx}` }]);
+  // 버튼 라벨의 번호는 본문 번호(b.no)를 그대로 쓴다 — 순번을 다시 매기면 어긋난다
+  const rows = buttons.map(b =>
+    [{ text: `${b.no}. ${String(b.headline).slice(0, 28)}…`, callback_data: `led:${dateStr}|${b.idx}` }]);
   return rows.length ? { inline_keyboard: rows } : undefined;
 }
 async function sendContextBrief(dest, msgs, buttons, dateStr) {

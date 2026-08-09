@@ -194,22 +194,28 @@ export function composeContextBrief(ledger, dateStr, total, headerLabel) {
   const parts = [];
   parts.push(`☀️ <b>${esc(headerLabel)}</b>\n<i>어제 보도 ${total.toLocaleString()}건 — 이슈 대장 기준, 하루가 아니라 흐름으로 봅니다</i>`);
 
+  // ⚠ 번호는 세 구획을 관통해 매긴다. 예전엔 본문이 7+5+4를 나열하는데 버튼은 6+3+2만 만들어
+  //   "본문 7번"과 "버튼 7번"이 서로 다른 이슈를 가리켰다(2026-08-09 사용자 신고).
+  //   이제 본문 번호 = 버튼 번호 = 아래 picked 배열의 순번으로 항상 일치한다.
+  const picked = [...cont.slice(0, 7), ...fresh.slice(0, 5), ...rekindled.slice(0, 4)];
+  const noOf = iss => picked.indexOf(iss) + 1;
+
   if (cont.length) {
-    const lines = cont.slice(0, 7).map((iss, i) =>
-      `<b>${i + 1}. ${esc(String(iss.lastHead || iss.label).slice(0, 48))}</b>${tag(iss)}\n` +
+    const lines = cont.slice(0, 7).map(iss =>
+      `<b>${noOf(iss)}. ${esc(String(iss.lastHead || iss.label).slice(0, 48))}</b>${tag(iss)}\n` +
       `    ${dayN(iss)}일째 ${sparkline(iss, dateStr)} 어제 ${iss.daily[dateStr]}건 · 누적 ${cum(iss)}건 ${trendOf(iss, dateStr)}`);
     parts.push(`📌 <b>계속되는 이슈</b>\n\n${lines.join("\n\n")}`);
   }
   if (fresh.length) {
     const lines = fresh.slice(0, 5).map(iss =>
-      `· <b>${esc(String(iss.lastHead || iss.label).slice(0, 48))}</b> — 첫 보도 ${iss.daily[dateStr]}건`);
+      `<b>${noOf(iss)}.</b> ${esc(String(iss.lastHead || iss.label).slice(0, 48))} — 첫 보도 ${iss.daily[dateStr]}건`);
     parts.push(`🆕 <b>새로 떠오른 이슈</b>\n${lines.join("\n")}`);
   }
   if (rekindled.length) {
     const lines = rekindled.slice(0, 4).map(iss => {
       const prevKeys = Object.keys(iss.daily).filter(k => k < dateStr).sort();
       const gap = gapDays(prevKeys[prevKeys.length - 1], dateStr);
-      return `· <b>${esc(String(iss.lastHead || iss.label).slice(0, 48))}</b>${tag(iss)} — ${gap}일 만에 다시 ${iss.daily[dateStr]}건`;
+      return `<b>${noOf(iss)}.</b> ${esc(String(iss.lastHead || iss.label).slice(0, 48))}${tag(iss)} — ${gap}일 만에 다시 ${iss.daily[dateStr]}건`;
     });
     parts.push(`🔄 <b>재점화</b>\n${lines.join("\n")}`);
   }
@@ -227,8 +233,9 @@ export function composeContextBrief(ledger, dateStr, total, headerLabel) {
   }
   if (cur) msgs.push(cur);
 
-  const buttons = [...cont.slice(0, 6), ...fresh.slice(0, 3), ...rekindled.slice(0, 2)]
+  // 버튼 = 본문에 실린 항목 그대로, 같은 번호로 (텔레그램 세로 키보드 한도 고려해 12개까지)
+  const buttons = picked.slice(0, 12)
     .filter(iss => iss.lastHead)
-    .map(iss => ({ headline: iss.lastHead, idx: ledger.issues.indexOf(iss) }));
+    .map(iss => ({ headline: iss.lastHead, idx: ledger.issues.indexOf(iss), no: noOf(iss) }));
   return { msgs, buttons };
 }
