@@ -37,7 +37,8 @@ export function seedIssues() {
     mk("seed-gwansa",  "시장 관사 사용",               ["시장 관사", "관사 사용"]),
     // ⚠ "생중계" 단독은 스포츠 중계 편성기사를 흡수함(실측) — 반드시 맥락어와 결합
     mk("seed-live",    "회의 생중계·다면평가",         ["회의 생중계", "시정 생중계", "다면평가"]),
-    mk("seed-safety",  "급경사지·빈집 안전",           ["급경사지", "축대 붕괴", "빈집"]),
+    // ⚠ "빈집" 단독은 유기동물·부동산 기사까지 흡수(실측) — 정비/철거 맥락과 결합
+    mk("seed-safety",  "급경사지·빈집 안전",           ["급경사지", "축대 붕괴", "빈집 정비", "빈집 철거", "빈집 문제"]),
     mk("seed-semi",    "반도체 영남 소외론",           ["반도체 영남", "영남 소외"]),
     mk("seed-jaesoo",  "전재수 시장 관련 보도",        ["전재수"]),
   ];
@@ -172,11 +173,14 @@ export function issueArticles(iss, items) {
  */
 export function composeContextBrief(ledger, dateStr, total, headerLabel) {
   const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const fresh = [], cont = [], rekindled = [];
+  const fresh = [], cont = [], rekindled = [], tracked = [];
   for (const iss of ledger.issues) {
     const y = iss.daily[dateStr];
     if (!y) continue;
     if (LEDGER_NOISE.test(iss.label + " " + (iss.lastHead || ""))) continue;  // 과거에 들어온 정기물 격리
+    // 씨앗(추적 이슈)은 사건이 아니라 상시 트래커다. 사건 목록에 섞으면
+    // "최휘영 장관 접견"(하루짜리)이 "23일째 누적 522건"으로 읽히는 오해가 생긴다(2026-08-11 지적).
+    if (iss.seeded) { tracked.push(iss); continue; }
     const prevKeys = Object.keys(iss.daily).filter(k => k < dateStr).sort();
     if (!prevKeys.length) fresh.push(iss);
     else if (gapDays(prevKeys[prevKeys.length - 1], dateStr) >= 4) rekindled.push(iss);
@@ -218,6 +222,15 @@ export function composeContextBrief(ledger, dateStr, total, headerLabel) {
       return `<b>${noOf(iss)}.</b> ${esc(String(iss.lastHead || iss.label).slice(0, 48))}${tag(iss)} — ${gap}일 만에 다시 ${iss.daily[dateStr]}건`;
     });
     parts.push(`🔄 <b>재점화</b>\n${lines.join("\n")}`);
+  }
+  // 🔎 추적 이슈: 이슈명(label)을 제목으로 쓰고, 어제 대표 보도는 부제로 — 사건과 혼동되지 않게
+  if (tracked.length) {
+    tracked.sort(byY);
+    const lines = tracked.map(iss => {
+      const head = iss.lastHead ? `\n     └ 어제 대표: ${esc(String(iss.lastHead).slice(0, 42))}` : "";
+      return `· <b>${esc(iss.label)}</b> — 어제 ${iss.daily[dateStr]}건 · 누적 ${cum(iss)}건 (${dayN(iss)}일째) ${trendOf(iss, dateStr)}${head}`;
+    });
+    parts.push(`🔎 <b>시정 추적 이슈</b> <i>(사건이 아니라 상시 추적 항목)</i>\n${lines.join("\n")}`);
   }
   if (quiet.length) {
     const names = quiet.slice(0, 3).map(i => esc(String(i.label).slice(0, 24))).join(" / ");
