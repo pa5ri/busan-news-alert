@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, isDpBusan } from "./category.mjs";
 
 const KEYWORD = "부산";
 // 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
@@ -352,6 +352,11 @@ async function runOnce() {
       const clean = title.replace(/\[(단독|속보)\]\s*/g, "").trim();
       await sendCat("단독·속보",
         `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…`);
+    }
+    // 더불어민주당 부산시당 전용 방 (메이저 필터는 그대로 적용 — 물량이 충분하다)
+    if (isDpBusan(rec)) {
+      await sendCat("민주당시당",
+        `🔵 <b>[민주당 부산시당]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     // 인터뷰(시장)·르포·기고 전용 방
     if (special) {

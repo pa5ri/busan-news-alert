@@ -106,6 +106,18 @@ export function specialKind(item) {
 }
 export const SPECIAL_EMOJI = { "인터뷰": "🎤", "르포": "📷", "기고": "🖋" };
 
+// ── 더불어민주당 부산시당 전용 방 ──
+// ⚠ 국민의힘도 '부산시당위원장'을 쓴다(이성권) — 제목에 여권 표기가 없으면 배제해야 한다.
+// 본문(ctx) 매칭은 쓰지 않는다: 전당대회·순회경선 기사가 통째로 딸려온다(실측).
+const DP_CITY  = t => /부산\s*시?당/.test(t) && /(?:더불어)?민주당|민주|與/.test(t);
+const DP_CHAIR = t => /박홍배/.test(t);                       // 현 부산시당위원장(2026-08-02 선출)
+const PPP_ONLY = t => /국민의힘|이성권|한동훈|장동혁/.test(t) && !/(?:더불어)?민주당|민주|與|박홍배/.test(t);
+export function isDpBusan(item) {
+  const t = String(item.t || item.title || "");
+  if (PPP_ONLY(t)) return false;
+  return DP_CITY(t) || DP_CHAIR(t);
+}
+
 // 분야별 이모지 (메시지 머리표)
 export const CAT_EMOJI = {
   "정치": "🗳", "경제": "💼", "사회": "👮", "생활/문화": "🏡",
