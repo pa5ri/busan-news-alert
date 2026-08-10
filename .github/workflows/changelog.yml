@@ -1,0 +1,45 @@
+name: 변경 이력 중계
+
+# CHANGELOG.md가 바뀐 푸시에서, 맨 위 항목 하나를 텔레그램 「📋 변경 이력」 방으로 보낸다.
+# 파일이 원본(내가 읽는 곳)이고 텔레그램은 사본(사용자가 보는 곳)이다.
+on:
+  push:
+    branches: [main]
+    paths: ["CHANGELOG.md"]
+  workflow_dispatch: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: 최신 항목 발송
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_TOPIC_GROUP: ${{ secrets.TG_TOPIC_GROUP }}
+          TG_TOPICS: ${{ secrets.TG_TOPICS }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const md = fs.readFileSync("CHANGELOG.md", "utf8");
+            // 맨 위 "## " 블록 하나만 추출 (다음 "## " 직전까지)
+            const m = md.match(/^## [\s\S]*?(?=\n## |$)/m);
+            if (!m) { console.log("항목 없음"); process.exit(0); }
+            const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            const lines = m[0].trim().split("\n");
+            const title = lines[0].replace(/^##\s*/, "");
+            const body = lines.slice(1).join("\n")
+              .replace(/^- \*\*(.+?)\*\*:/gm, "▸ <b>$1</b>:")   // - **무엇을**: → ▸ 무엇을:
+              .replace(/\*\*(.+?)\*\*/g, "$1");
+            const text = `📋 <b>${esc(title)}</b>\n\n${esc(body)}`.slice(0, 3800);
+            const TOPICS = JSON.parse(process.env.TG_TOPICS || "{}");
+            fetch(`https://api.telegram.org/bot${process.env.TG_BOT_TOKEN}/sendMessage`, {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                chat_id: process.env.TG_TOPIC_GROUP,
+                message_thread_id: TOPICS["변경이력"],
+                text, parse_mode: "HTML", disable_web_page_preview: true,
+              }),
+            }).then(r => r.json()).then(j => console.log(j.ok ? "발송 OK: " + title : "실패: " + j.description));
+          '
