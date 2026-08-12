@@ -7,6 +7,7 @@ const TOKEN = process.env.TG_BOT_TOKEN, GROUP = process.env.TG_TOPIC_GROUP;
 const TOPICS = JSON.parse(process.env.TG_TOPICS || "{}");
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const OLD_REP = /\[[^\]]{0,12}르포[^\]]{0,12}\]/, OLD_CON = /\[[^\]]{0,8}기고[^\]]{0,8}\]/;
+const ALREADY = new Set(String(process.env.SKIP_URLS || "").split(",").map(s => s.trim()).filter(Boolean));
 
 const items = [];
 for (const f of readdirSync("archive").filter(f => f.endsWith(".jsonl")).sort())
