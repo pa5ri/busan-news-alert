@@ -19,8 +19,8 @@ for (const it of items) {
   if (kind !== "르포" && kind !== "기고") continue;
   if (kind === "르포" && OLD_REP.test(it.t)) continue;      // 이미 올라간 것
   if (kind === "기고" && OLD_CON.test(it.t)) continue;
-  const key = (it.url || it.t).replace(/[?#].*$/, "");
-  if (seen.has(key)) continue;
+  const key = (it.url || it.t).replace(/#.*$/, "");   // ⚠ 쿼리 보존(국제신문 key=…가 기사번호)
+  if (seen.has(key) || ALREADY.has(it.url)) continue;
   seen.add(key);
   picked.push({ kind, ...it });
 }
