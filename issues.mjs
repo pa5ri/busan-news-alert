@@ -13,6 +13,14 @@ export const QUIET_DAYS = 3;   // 이 날수 이상 보도 없으면 소강
 const CLOSE_DAYS = 21;    // 소강 후 이 날수 지나면 종결(씨앗 이슈는 제외 — 수동 관리)
 
 const BUSAN_RE = /부산|해운대|기장|사하|사상|영도|동래|금정|수영|부산진|가덕|벡스코|낙동강|광안|자갈치|센텀|북항|사직|구덕|김해공항|에어부산|BNK|전재수/;
+// ⚠ '관계 맺기' 관용어 — 서로 무관한 사건을 이어붙이는 다리 역할을 한다(2026-08-11 실측).
+//   예: "BNK금융, 수의사회와 맞손"이 "현대제철, DNV와 …맞손"을 흡수해 7개 사건이 한 이슈로 뭉쳤다.
+//   이슈 서명이 40개까지 자라면서 그물이 넓어지는 눈덩이 효과가 원인.
+//   → 이 단어들은 '같은 사건인지' 판정에서만 제외한다(표시·라벨에는 영향 없음).
+//   ⚠ 조성·구축·유치 같은 주제어를 넣으면 반대로 진짜 연속 사건(해수부 신청사)이 끊긴다. 넓히지 말 것.
+const BRIDGE = new Set(["맞손", "손잡고", "손잡았다", "손잡아", "맞손잡", "업무협약", "협약", "협력", "맞잡",
+  "나서", "나섰다", "앞장", "체결", "맺어", "공동", "상호", "협업", "동참", "힘모아", "뜻모아"]);
+const matchTokens = toks => [...toks].filter(w => !BRIDGE.has(w));
 // 이슈가 아닌 정기물(날씨·편성·분양·복권 등) — 대장 신설 차단 (실측: 날씨 묶음이 '계속 이슈' 2위까지 올라옴)
 const LEDGER_NOISE = /날씨|기온|폭염특보|미세먼지 농도|주간예보|운세|띠별|로또|당첨번호|분양캘린더|청약 일정|선발투수|중계 채널|편성표|부고\]|인사\]|오늘의 일정|증시|코스피 마감|환율 마감/;
 
@@ -90,7 +98,8 @@ export function updateLedger(ledger, dateStr, items) {
     if (LEDGER_NOISE.test(c.headline)) continue;     // 정기물은 매칭·신설 모두 제외
     // 씨앗 키워드에 걸리는 클러스터는 씨앗이 이미 집계했으므로 유기 쪽에서 제외 (이중 집계 방지)
     if (seeds.some(s => c.items.some(it => kwHit(it, s.keywords)))) continue;
-    const ctoks = new Set(c.toks || []);
+    const ctoks = new Set(matchTokens(c.toks || []));   // 관계 관용어는 판정에서 제외
+    if (!ctoks.size) continue;
     let best = null, bestShared = 0;
     for (const iss of organic) {
       let shared = 0;
