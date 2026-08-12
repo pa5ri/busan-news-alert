@@ -106,16 +106,19 @@ export function specialKind(item) {
 }
 export const SPECIAL_EMOJI = { "인터뷰": "🎤", "르포": "📷", "기고": "🖋" };
 
-// ── 더불어민주당 부산시당 전용 방 ──
-// ⚠ 국민의힘도 '부산시당위원장'을 쓴다(이성권) — 제목에 여권 표기가 없으면 배제해야 한다.
-// 본문(ctx) 매칭은 쓰지 않는다: 전당대회·순회경선 기사가 통째로 딸려온다(실측).
-const DP_CITY  = t => /부산\s*시?당/.test(t) && /(?:더불어)?민주당|민주|與/.test(t);
-const DP_CHAIR = t => /박홍배/.test(t);                       // 현 부산시당위원장(2026-08-02 선출)
-const PPP_ONLY = t => /국민의힘|이성권|한동훈|장동혁/.test(t) && !/(?:더불어)?민주당|민주|與|박홍배/.test(t);
-export function isDpBusan(item) {
+// ── 여야 부산시당위원장 전용 방 ──
+// 인물 키워드로 대칭 수집한다(사설·인터뷰 방과 같은 방식). 제목에 이름이 있을 때만 —
+// 본문까지 보면 전당대회·타 인사 행사 기사가 통째로 딸려온다(실측: 이성권 본문전용 43건 중 대부분 무관).
+const PARTY_CHIEF = [
+  ["민주당시당",   /박홍배/, "🔵", "민주당 부산시당"],      // 더불어민주당 부산시당위원장(2026-08-02 선출)
+  ["국민의힘시당", /이성권/, "🔴", "국민의힘 부산시당"],    // 국민의힘 부산시당위원장
+];
+/** 여야 시당위원장 방 판별. 해당 없으면 null. → { topic, emoji, label } */
+export function partyChief(item) {
   const t = String(item.t || item.title || "");
-  if (PPP_ONLY(t)) return false;
-  return DP_CITY(t) || DP_CHAIR(t);
+  for (const [topic, re, emoji, label] of PARTY_CHIEF)
+    if (re.test(t)) return { topic, emoji, label };
+  return null;
 }
 
 // 분야별 이모지 (메시지 머리표)
