@@ -94,14 +94,21 @@ const RE_REPORTAGE = /\[[^\]]*르포[^\]]*\]/;                // [르포] [현�
 const RE_CONTRIB   = /\[[^\]]*기고[^\]]*\]/;                // [기고] [특별기고] [○○○ 기고]
 const LOCAL_SRC    = /부산일보|국제신문|KNN|부산MBC/;        // 부산 지역지는 그 자체로 지역 사안
 
+// 제목에 든 타 광역지명 — 제목이 곧 그 기사의 주인공이므로, 부산이 아닌 지역명이 제목에 있으면
+// 부산은 스침(출신지·통계 나열·시설 나열)일 가능성이 높다(2026-08-12 실측 9건 중 5건이 이 패턴).
+const OTHER_REGION = /서울|인천|대구|대전|광주|울산|세종|경기|수원|성남|용인|안양|부천|고양|충청|충북|충남|청주|천안|전북|전주|전남|여수|순천|목포|강원|춘천|원주|강릉|제주|경북|포항|구미|경주|안동|경남|창원|진주|김해|양산|거제|통영/;
+
 /**
  * 별도 방으로 뺄 유형 판별. 해당 없으면 null.
- * 르포·기고는 전국물이 섞이므로 부산 관련성 판정을 통과해야 한다(실측 제외율 르포 20%·기고 30%).
+ * 르포·기고 수집 원칙(2026-08-12 확정): "부산 언급 + 제목에 말머리" — 단 제목에 타 지역명이 있으면 제외.
+ *   ⚠ 우리 파이프라인은 네이버 '부산' 검색 결과만 담으므로 '본문에 부산'은 사실상 항상 참이다.
+ *     따라서 부산 관련성 판정(isBusanRelevant)을 통과하지 못해도, 제목이 타 지역 기사가 아니면 받는다.
+ *     놓치는 손실(진짜 부산 르포)이 노이즈 손실보다 크다고 보고 느슨한 쪽을 택했다. 물량 영향 +0.2건/일.
  */
 export function specialKind(item) {
   const t = String(item.t || item.title || "");
   if (RE_INTERVIEW.test(t) && RE_MAYOR.test(t)) return "인터뷰";
-  const local = LOCAL_SRC.test(String(item.src || "")) || isBusanRelevant(item);
+  const local = LOCAL_SRC.test(String(item.src || "")) || isBusanRelevant(item) || !OTHER_REGION.test(t);
   if (RE_REPORTAGE.test(t) && local) return "르포";
   if (RE_CONTRIB.test(t) && local) return "기고";
   return null;
