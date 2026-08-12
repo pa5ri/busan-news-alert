@@ -328,7 +328,7 @@ async function runOnce() {
 
     // 매체 필터: 비메이저는 전송 없이 기록만 (아카이브·급증 감지·이슈 대장에는 전량 반영)
     // 단독·속보와 별도 관리 유형은 매체 불문 통과 (군소 매체 비중이 높은 유형)
-    if (!MAJOR.has(name) && !scoopPass && !special) {
+    if (!MAJOR.has(name) && !scoopPass && !special && !chief) {
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks: tokensOf(title) });
@@ -364,6 +364,11 @@ async function runOnce() {
       const clean2 = title.replace(/^\[[^\]]{0,12}(인터뷰|르포|기고)[^\]]{0,12}\]\s*/, "").trim() || title;
       await sendCat(special,
         `${SPECIAL_EMOJI[special]} <b>[${special}]</b> <b>${esc(clean2)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
+    }
+    // 여야 부산시당위원장 전용 방 (박홍배·이성권) — 분야 방과 같은 형식(맥락 단락 포함)
+    if (chief) {
+      await sendCat(chief.topic,
+        `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     archive(it, name, cat);
     if ((sent + recorded) % 10 === 0) saveState();   // 대량 처리 중 잡이 죽어도 중복 재전송을 최소화

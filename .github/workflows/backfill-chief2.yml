@@ -1,0 +1,22 @@
+name: 시당위원장 방 맥락 포함 재구성 (일회성)
+on:
+  workflow_dispatch:
+    inputs:
+      del_from: { description: "삭제 시작 ID", required: true }
+      del_to:   { description: "삭제 끝 ID",   required: true }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: 업로드
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_TOPIC_GROUP: ${{ secrets.TG_TOPIC_GROUP }}
+          TG_TOPICS: ${{ secrets.TG_TOPICS }}
+          DEL_FROM: ${{ inputs.del_from }}
+          DEL_TO: ${{ inputs.del_to }}
+        run: node backfill_chief2.mjs
