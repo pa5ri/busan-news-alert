@@ -1,0 +1,120 @@
+# 부산 통합 모니터링 — 시스템 총람
+
+> **새 세션 시작 시 이 파일과 CHANGELOG.md를 먼저 읽을 것.**
+> 이 파일 = 현재 구조·운영법·함정(무엇이 어떻게 돌아가나), CHANGELOG.md = 변경의 역사(왜 이렇게 됐나).
+> 갱신 규칙: 구조가 바뀌면 이 파일을, 개별 변경은 CHANGELOG.md를 고친다.
+
+최종 갱신: 2026-08-12
+
+## 1. 한눈에 보기
+
+- 사용자 = 부산시장(전재수) 정무 참모. 이 시스템은 뉴스·의정 모니터링 자동화.
+- 리포 `pa5ri/busan-news-alert`(공개) = 코드 + 상태 + 아카이브가 전부 여기. **리포가 곧 DB.**
+- GitHub Actions에서 상시 가동(이 계정은 **cron이 발화하지 않아** 자가 연쇄 + watchdog 구조).
+- 텔레그램 포럼 그룹 「부산 통합 모니터링」(chat_id `-1004297621610`) 하나에 주제(방) 20개로 전부 배달.
+
+## 2. 텔레그램 구조
+
+봇 5개 (토큰은 GitHub Secrets, 값은 BotFather에서 재확인 가능):
+
+| 봇 | 표시명 | 시크릿 | 역할 |
+|---|---|---|---|
+| @busan_live_bot | `.` (투명문자) | TG_BOT_TOKEN | 실시간·분야방·특수방 전부, TOP 명령/버튼 |
+| @busan_brief_bot | 부산 뉴스 브리핑 | TG_BRIEF_TOKEN | 아침 브리핑·주간 리포트·브리핑 버튼 |
+| @busan_newsmon_bot | TV | TG_NIGHTLY_TOKEN | 밤 10시 TV 보고(엑셀) |
+| @busan_ordinance_bot | 부산시 입법예고 | TG_ORD_TOKEN | 입법예고 (로컬 PC에서 발송) |
+| @busan_bills_bot | 부산시의회 의안정보 | TG_BILL_TOKEN | 의안접수 (로컬 PC에서 발송) |
+
+`TG_TOPICS` 시크릿 (주제 → message_thread_id) 현재 값:
+
+```json
+{"정치":4,"경제":5,"사회":6,"생활/문화":7,"IT/과학":8,"세계":9,"스포츠":10,
+ "단독·속보":11,"기타":79,"브리핑":71,"입법예고":73,"의안정보":75,"TV":69,
+ "사설":8995,"인터뷰":13580,"르포":13582,"기고":13584,
+ "민주당시당":14628,"변경이력":14791,"국민의힘시당":16210}
+```
+
+- 봇은 **일반 멤버**(관리자 아님 — 라벨·배지 제거 목적). 주제 신설은 사용자 계정(텔레그램 데스크톱 GUI)으로 만들고, 첫 메시지의 「메시지 링크 복사」에서 `t.me/c/<chat>/<thread>/<msg>`의 thread를 읽는다.
+- 새 주제 추가 절차: GUI로 주제 생성 → thread id 확인 → `TG_TOPICS` 시크릿 갱신(scratchpad 파일 경유 `gh secret set TG_TOPICS < f`) → 루프 재가동.
+
+## 3. 파일별 역할
+
+| 파일 | 역할 |
+|---|---|
+| alert.mjs | 메인 루프(58분 잡, 2분 폴링). 수집→필터→분류→발송→아카이브, TOP 명령·버튼 폴링, 아침 브리핑, 밤10시 트리거, 사설 체크, 급증 감지 |
+| category.mjs | 분야 분류(categorize), 단독·속보(isScoop/isBusanRelevant), 특수유형(specialKind: 인터뷰·르포·기고), 여야 시당위원장(partyChief: 박홍배→민주당시당/이성권→국민의힘시당) |
+| insight.mjs | 키워드 순위(topIssues), 사건 클러스터링(topStories, 0.5 토큰겹침), 토크나이저(tokensOf/keyTokens), formatRanking/formatStories |
+| issues.mjs | **이슈 대장**(issues.json) — 사건 생애 추적. updateLedger(하루 1회, 멱등 아님!), composeContextBrief(연속성 브리핑), issueArticles(led: 버튼), BRIDGE 관용어 |
+| editorials.mjs | 부산일보(/opinionmain/1, [사설] 제목만)·국제신문(list.asp?code=1710, 링크 kid=1710) 사설. 부산일보 지면일=등록+1일 보정 |
+| ordinance.mjs / ord-local.mjs | 시의회 입법예고·의안. **해외 IP 차단이라 로컬 PC 작업 스케줄러**("부산의정모니터링", 평일 09:30~18:30 2시간 간격)로 실행 |
+| nightly/ | 밤 10시 TV 모니터링(11개 매체 스크래핑→엑셀→전송). 클라우드 전용(puppeteer) |
+| state.json | seen/titles(중복 방지), tgOffset/briefOffset, briefedFor, surged*, edSeen/edInit. 워크플로가 커밋 |
+| issues.json | 이슈 대장. **splice 금지**(led: 버튼이 배열 인덱스 참조) |
+| archive/YYYY-MM-DD.jsonl | 전량 아카이브 {t,src,cat,pub,url,ctx}. 브리핑·대장·통계의 원천 |
+| CHANGELOG.md | 변경 이력. 맨 위에 추가 → changelog.yml이 「변경이력」 방에 자동 중계 |
+
+워크플로: alert.yml(본 루프+자가연쇄) / watchdog.yml(20분마다 루프 생존 확인, 죽었으면 재가동) / nightly.yml(가드로 하루 1회) / changelog.yml(CHANGELOG 푸시 시 맨 위 항목 중계).
+
+## 4. 발송 파이프라인 규칙 (alert.mjs)
+
+1. 네이버 API HUB `query=부산` 100건, 2분 주기. 연예 제외(3중 필터), 통신사 우선 제목 dedup(normTitle).
+2. **매체 필터**: MAJOR 38개만 실시간 전송, 비메이저는 기록만. **우회 = 단독·속보(부산) / specialKind / partyChief.**
+3. 분야방 발송 후 추가 발송: 단독·속보방, 인터뷰/르포/기고방, 시당위원장방(모두 맥락 단락 `…ctx…` 포함 동일 형식).
+4. 전송은 3.5초 페이싱 + 429 재시도 4회 + **성공 후에만 seen 마킹**(실패분 자동 이월).
+5. 아카이브는 전송 여부와 무관하게 전량 기록.
+
+특수 유형 판별 요약:
+- 인터뷰 = 제목에 `인터뷰` AND `전재수|부산시장`
+- 르포/기고 = 제목 `[…르포…]`/`[…기고…]` (괄호 안 글자수 제한 없음) AND (부산지역지 OR isBusanRelevant OR **제목에 타 광역지명 없음**) ← 2026-08-12 확정 원칙
+- 시당위원장 = 제목에 `박홍배`/`이성권` (본문 매칭 금지 — 무관 기사 다수)
+
+## 5. 스케줄 (전부 루프가 시계를 봄, cron은 보험)
+
+| 시각(KST) | 동작 |
+|---|---|
+| 상시 2분 | 실시간 수집·발송, 급증 감지(1시간 8건↑ && 평소 하루치 절반↑, 키당 하루 1회) |
+| 55분 주기 | 사설 체크 |
+| 07:00 | 아침 브리핑(연속성: 계속/신규/재점화 + 🔎시정 추적 + 전재수 섹션 + led: 버튼). briefedFor 가드. 놓치면 `gh workflow run alert.yml -f brief_now=true` |
+| 일요일 07:00 | 주간 누적 리포트(지난 일~토) |
+| 22:01 | nightly 트리거(루프가 dispatch, 가드가 중복 방지) |
+| 평일 낮 | 의정 체크(로컬 PC) |
+
+## 6. 운영 런북
+
+```bash
+# 루프 재가동(코드 변경 후 필수! 구버전 루프가 58분 계속 돎)
+gh run list --workflow=alert.yml -L 3   # in_progress 찾아서
+gh run cancel <ID>                       # watchdog 또는 자가연쇄가 새로 띄움
+
+# 아침 브리핑 놓쳤을 때
+gh workflow run alert.yml -f brief_now=true
+
+# 시크릿 갱신(값을 명령줄에 직접 쓰면 차단됨 — 파일 경유)
+printf '%s' '<값>' > $SCRATCHPAD/t.txt && gh secret set TG_TOPICS < $SCRATCHPAD/t.txt
+
+# 소급 업로드(백필) 패턴: 일회성 스크립트+워크플로 작성 → 실행 → 확인 → git rm
+#  - 3.5초 페이싱 + 429 재시도 필수
+#  - URL dedup은 쿼리 보존(#만 제거) — 국제신문 key=가 기사번호
+#  - 오래된 것부터(시간순), 맥락 단락 포함, 안내문 1건 먼저
+#  - 방 비우기: 봇은 자기 메시지만 삭제 가능, ID 구간 삭제는 다른 메시지 유탄 주의
+```
+
+## 7. 함정 목록 (재발 방지)
+
+- **GitHub cron은 이 계정에서 발화 안 함** → 자가연쇄+watchdog. 러너가 "스텝 0개로 15분 뒤 취소"되면 인프라 문제(코드 아님) — `gh api .../jobs -q '.jobs[0].steps|length'`가 0이면 그것.
+- **텔레그램 그룹 분당 ~20건 한도는 토픽 나눠도 공유**. editForumTopic도 연속 호출 시 429.
+- **해외 IP 차단**: 시의회(전면) → 로컬 PC 이관. 국제신문(간헐) → 3회 재시도.
+- **봇은 과거 메시지를 읽을 수 없다** → 텔레그램은 사본, 원본은 항상 리포 파일.
+- **이슈 대장**: BRIDGE 관용어(맞손·손잡고 등 20개)는 매칭에서 제외 — 무관 사건이 붙는 눈덩이 방지. 단 조성·구축·유치 같은 주제어는 넣지 말 것(진짜 연속 사건이 끊김). updateLedger는 같은 날짜 2회 넣으면 이중집계.
+- **씨앗(추적) 이슈**는 사건 목록과 분리 표시(🔎). 키워드는 맥락어 결합 필수("회의 생중계", "빈집 정비" — 단독 단어는 오탐).
+- **셸에서 한글+인용부호 heredoc/문자열 치환은 자주 깨진다** → 스크립트는 Write 도구로 파일 작성 후 실행. 문자열 치환 후엔 반드시 grep으로 삽입 확인(시당위원장 라우팅 누락 사고).
+- **CRLF**: CHANGELOG 삽입 시 `indexOf("## 2026-")` 방식 사용(줄바꿈 무관).
+- 부산일보 사설 code=**등록시각**(전날 17~18시), 국제신문 key=**지면일**. SBS 목록은 상대시각("N시간 전") 혼용.
+- TV조선 뉴스9 게시판은 평일만 게시 — 주말 0건은 정상(ℹ️).
+- 봇 이름은 빈 값 불가, U+115F/U+FFA0 투명문자는 가능.
+
+## 8. 확장 대기 항목
+
+- **2층 AI 요약**(이슈별 "왜 중요한가"): console.anthropic.com $5 충전 + API 키만 받으면 연결. 비용 월 $1~2.
+- 3층 등급 버튼(적/황/녹, media-watch 스킬 방식 반자동).
+- 단독·속보 전수 수집(검토 완료, 미착수 — CHANGELOG/메모리 참조).
