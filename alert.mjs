@@ -119,6 +119,12 @@ const chiefDup = (room, toks) => storyDup(toks, chiefRecent.filter(e => e.room =
 // 날씨 안내(온도·예보)는 하루 1건만 — 재해·사고성 제목은 제외
 const isWeatherInfo = t => /날씨|(아침|낮|오늘|내일|주말)\s?(최저|최고)?\s?기온/.test(t)
   && !/태풍|경보|피해|침수|정전|사고|호우/.test(t);
+// 의례성 기사(전송 생략, 아카이브만): 포토 캡션·운세·오늘의 일정·부고/인사/동정.
+// 캡션체는 "짧은 수식구 + ~하는 + 인명 + 직함"으로 끝나는 제목만(실기사 오탐 방지, 7일 전수검수 37/37 적중).
+const RE_PHOTO = /^\[?(포토|사진|화보|카드뉴스|포토뉴스)\]/;
+const RE_CAPTION = /^[^"'…,·]{0,16}(하는|나눈|나선|만난|둘러보는|참석한)\s?[가-힣]{2,5}\s?(의원|위원장|시장|장관|대표|총리|후보|사장|청장|지사|의장|목사)$/;
+const RE_ROUTINE = /오늘의\s?운세|띠별\s?운세|^\[?오늘의\s?주요\s?일정|^\[?(부고|인사|동정)\]/;
+const isCeremonial = t => RE_PHOTO.test(t) || RE_CAPTION.test(t) || RE_ROUTINE.test(t);
 let firstRun = seen.size === 0;
 
 const naverH = { "X-NCP-APIGW-API-KEY-ID": NAVER_ID, "X-NCP-APIGW-API-KEY": NAVER_SECRET };
@@ -374,9 +380,10 @@ async function runOnce() {
     }
 
     // 사안 중복 억제: 12시간 내 이미 보낸 사안의 재탕(헤드라인만 다른 타 매체 버전)은 기록만.
-    // 날씨 안내는 하루 1건만(state.wxDate). 단독·속보는 두 억제 모두 예외.
+    // 날씨 안내는 하루 1건만(state.wxDate), 의례성(포토 캡션·운세·일정·부고류)은 상시 기록만.
+    // 단독·속보는 모든 억제에서 예외.
     const wxCapped = isWeatherInfo(title) && state.wxDate === kstDate(0);
-    if (!scoopPass && (storyDup(toks, sentStories) || wxCapped)) {
+    if (!scoopPass && (storyDup(toks, sentStories) || wxCapped || isCeremonial(title))) {
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks });
