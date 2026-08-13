@@ -471,7 +471,17 @@ async function runChiefPass() {
       if (chiefDup(topic, tokensOf(title))) { chiefSeen.add(k); chiefTitles.add(nt); continue; } // 헤드라인만 다른 재탕
       fresh.push({ k, nt, it, title, ctx });
     }
-    if (firstRunChief) { for (const f of fresh) { chiefSeen.add(f.k); chiefTitles.add(f.nt); } continue; }  // 최초 1회는 백로그 흘림
+    // 최초 1회: 어제까지의 백로그만 흘리고, '오늘' 기사는 발송 대상으로 남긴다
+    // (2026-08-13 교훈: 전량 흘리면 가동 당일 아침 기사가 통째로 증발 — 박홍배 방이 하루 비었다)
+    if (firstRunChief) {
+      const today = kstDate(0);
+      for (let i = fresh.length - 1; i >= 0; i--) {
+        const d = new Date(fresh[i].it.pubDate);
+        if (isNaN(d) || new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10) !== today) {
+          chiefSeen.add(fresh[i].k); chiefTitles.add(fresh[i].nt); fresh.splice(i, 1);
+        }
+      }
+    }
 
     let n = 0;
     for (const f of fresh.slice(0, 20)) {
