@@ -120,15 +120,18 @@ export const SPECIAL_EMOJI = { "인터뷰": "🎤", "르포": "📷", "기고": 
 // 본문까지 보면 전당대회·타 인사 행사 기사가 통째로 딸려온다(실측: 이성권 본문전용 43건 중 대부분 무관).
 // 2026-08-13: 인물명만 보던 규칙이 「국민의힘 부산시당, 공공기관 이전 토론회」류 시당 활동 기사를
 //   26일간 37건(하루 1.4건) 놓쳐 조직명을 추가했다. 양당이 한 제목에 같이 나온 사례는 0건.
+// 2026-08-13(2차): 위원장 이름은 본문(요약)까지 본다 — 사용자 요청. 다른 방이 '부산'을 본문까지
+//   훑는 것과 같은 기준. 조직명은 제목만(본문 조직명은 단순 인용이 많다).
 const PARTY_CHIEF = [
-  ["민주당시당",   /박홍배|(?:더불어)?민주당\s?부산\s?시당/, "🔵", "민주당 부산시당"],   // 시당위원장 박홍배(2026-08-02 선출)
-  ["국민의힘시당", /이성권|(?:국민의힘|국힘)\s?부산\s?시당/, "🔴", "국민의힘 부산시당"], // 시당위원장 이성권
+  { topic: "민주당시당",   name: /박홍배/, org: /(?:더불어)?민주당\s?부산\s?시당/, emoji: "🔵", label: "민주당 부산시당" },
+  { topic: "국민의힘시당", name: /이성권/, org: /(?:국민의힘|국힘)\s?부산\s?시당/, emoji: "🔴", label: "국민의힘 부산시당" },
 ];
 /** 여야 시당위원장 방 판별. 해당 없으면 null. → { topic, emoji, label } */
 export function partyChief(item) {
   const t = String(item.t || item.title || "");
-  for (const [topic, re, emoji, label] of PARTY_CHIEF)
-    if (re.test(t)) return { topic, emoji, label };
+  const body = String(item.ctx || "");
+  for (const { topic, name, org, emoji, label } of PARTY_CHIEF)
+    if (name.test(t) || name.test(body) || org.test(t)) return { topic, emoji, label };
   return null;
 }
 

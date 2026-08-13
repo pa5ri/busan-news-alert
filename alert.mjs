@@ -90,6 +90,9 @@ let state = { seen: [], titles: [] };
 if (existsSync(STATE_FILE)) { try { state = JSON.parse(readFileSync(STATE_FILE, "utf8")); } catch {} }
 const seen = new Set(state.seen || []);
 const seenTitles = new Set(state.titles || []);
+// 시당위원장 방 전용 중복 방지 — 인물 전용 검색(2차 패스)과 부산 검색(본 패스)이 같은 기사를 각각 집어올 수 있다
+const chiefSeen = new Set(state.chiefSeen || []);
+let firstRunChief = chiefSeen.size === 0;   // 최초 1회는 과거 백로그를 흘려보낸다
 let firstRun = seen.size === 0;
 
 const naverH = { "X-NCP-APIGW-API-KEY-ID": NAVER_ID, "X-NCP-APIGW-API-KEY": NAVER_SECRET };
@@ -240,6 +243,7 @@ function saveState() {
   writeFileSync(STATE_FILE, JSON.stringify({
     seen: [...seen].slice(-STATE_CAP),
     titles: [...seenTitles].slice(-STATE_CAP),
+    chiefSeen: [...chiefSeen].slice(-2000),
     tgOffset: state.tgOffset || 0,
     briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
@@ -355,11 +359,6 @@ async function runOnce() {
       await sendCat("단독·속보",
         `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
-    // 더불어민주당 부산시당 전용 방 (메이저 필터는 그대로 적용 — 물량이 충분하다)
-    if (isDpBusan(rec)) {
-      await sendCat("민주당시당",
-        `🔵 <b>[민주당 부산시당]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
-    }
     // 인터뷰(시장)·르포·기고 전용 방
     if (special) {
       const clean2 = title.replace(/^\[[^\]]{0,12}(인터뷰|르포|기고)[^\]]{0,12}\]\s*/, "").trim() || title;
@@ -367,7 +366,8 @@ async function runOnce() {
         `${SPECIAL_EMOJI[special]} <b>[${special}]</b> <b>${esc(clean2)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     // 여야 부산시당위원장 전용 방 (박홍배·이성권) — 분야 방과 같은 형식(맥락 단락 포함)
-    if (chief) {
+    if (chief && !chiefSeen.has(sg.grp[0].k)) {
+      chiefSeen.add(sg.grp[0].k);
       await sendCat(chief.topic,
         `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
@@ -384,7 +384,51 @@ async function runOnce() {
     await send(`⏳ 신규 ${freshGroups.length}건 중 ${sent}건 전송 — 나머지는 이어서 처리됩니다.`);
 
   firstRun = false;
+  await runChiefPass();
   saveState();
+}
+
+// ---- 2차 패스: 시당위원장 인물 전용 검색 ----
+// 본 패스는 query=부산이라 "박홍배·이성권이 본문에만 나오고 부산이 없는" 기사를 놓친다.
+// 인물명을 직접 질의해 제목·본문 어디에 나오든 잡는다(네이버가 전문 검색). 결과는 해당 시당 방에만
+// 보낸다 — 분야 방·아카이브에 넣으면 부산과 무관한 기사가 섞이기 때문. 중복은 chiefSeen으로 막는다.
+const CHIEF_QUERIES = [
+  { q: "박홍배", topic: "민주당시당", emoji: "🔵", label: "민주당 부산시당" },
+  { q: "이성권", topic: "국민의힘시당", emoji: "🔴", label: "국민의힘 부산시당" },
+];
+async function runChiefPass() {
+  for (const { q, topic, emoji, label } of CHIEF_QUERIES) {
+    let j;
+    try {
+      const r = await fetch(`https://naverapihub.apigw.ntruss.com/search/v1/news?query=${encodeURIComponent(q)}&display=100&start=1&sort=date`, { headers: naverH });
+      if (!r.ok) { console.error(`인물 검색 실패(${q}):`, r.status); continue; }
+      j = await r.json();
+    } catch (e) { console.error(`인물 검색 오류(${q}):`, e.message); continue; }
+
+    const fresh = [];
+    for (const it of (j.items || []).reverse()) {          // 오래된 것부터
+      if (isEnt(it)) continue;
+      const k = keyOf(it);
+      if (chiefSeen.has(k)) continue;
+      const title = strip(it.title), ctx = strip(it.description).slice(0, 300);
+      if (!(title.includes(q) || ctx.includes(q))) continue;   // 질의어가 실제로 들어간 기사만
+      fresh.push({ k, it, title, ctx });
+    }
+    if (firstRunChief) { for (const f of fresh) chiefSeen.add(f.k); continue; }  // 최초 1회는 백로그 흘림
+
+    let n = 0;
+    for (const f of fresh.slice(0, 20)) {
+      const { name } = pressInfo(f.it.originallink || f.it.link);
+      const link = /n\.news\.naver\.com/.test(f.it.link || "") ? f.it.link : (f.it.originallink || f.it.link);
+      const ok = await sendCat(topic,
+        `${emoji} <b>[${label}]</b> <b>${esc(f.title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(f.ctx)}…`);
+      if (!ok) break;                                       // 실패분은 다음 회차로 이월
+      chiefSeen.add(f.k);
+      n++;
+    }
+    if (n) console.log(`  인물 검색 ${q}: ${n}건 발송`);
+  }
+  firstRunChief = false;
 }
 
 // ---- "TOP n" 명령 응답 / 아침 브리핑 (봇별 토큰으로 발송) ----
