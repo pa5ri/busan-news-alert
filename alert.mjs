@@ -92,6 +92,7 @@ const seen = new Set(state.seen || []);
 const seenTitles = new Set(state.titles || []);
 // 시당위원장 방 전용 중복 방지 — 인물 전용 검색(2차 패스)과 부산 검색(본 패스)이 같은 기사를 각각 집어올 수 있다
 const chiefSeen = new Set(state.chiefSeen || []);
+const chiefTitles = new Set(state.chiefTitles || []);   // 같은 사건의 타 매체 재전송 억제(제목 계열)
 let firstRunChief = chiefSeen.size === 0;   // 최초 1회는 과거 백로그를 흘려보낸다
 let firstRun = seen.size === 0;
 
@@ -244,6 +245,7 @@ function saveState() {
     seen: [...seen].slice(-STATE_CAP),
     titles: [...seenTitles].slice(-STATE_CAP),
     chiefSeen: [...chiefSeen].slice(-2000),
+    chiefTitles: [...chiefTitles].slice(-2000),
     tgOffset: state.tgOffset || 0,
     briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
@@ -366,8 +368,9 @@ async function runOnce() {
         `${SPECIAL_EMOJI[special]} <b>[${special}]</b> <b>${esc(clean2)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     // 여야 부산시당위원장 전용 방 (박홍배·이성권) — 분야 방과 같은 형식(맥락 단락 포함)
-    if (chief && !chiefSeen.has(sg.grp[0].k)) {
-      chiefSeen.add(sg.grp[0].k);
+    if (chief && !sg.grp.some(g => chiefSeen.has(g.k)) && !chiefTitles.has(sg.nt)) {
+      for (const g of sg.grp) chiefSeen.add(g.k);   // 같은 제목 계열 전체 — 인물 패스가 다른 매체 버전을 다시 집지 않게
+      chiefTitles.add(sg.nt);
       await sendCat(chief.topic,
         `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
@@ -412,9 +415,11 @@ async function runChiefPass() {
       if (chiefSeen.has(k)) continue;
       const title = strip(it.title), ctx = strip(it.description).slice(0, 300);
       if (!(title.includes(q) || ctx.includes(q))) continue;   // 질의어가 실제로 들어간 기사만
-      fresh.push({ k, it, title, ctx });
+      const nt = normTitle(it.title);
+      if (chiefTitles.has(nt)) { chiefSeen.add(k); continue; } // 같은 사건의 타 매체 버전
+      fresh.push({ k, nt, it, title, ctx });
     }
-    if (firstRunChief) { for (const f of fresh) chiefSeen.add(f.k); continue; }  // 최초 1회는 백로그 흘림
+    if (firstRunChief) { for (const f of fresh) { chiefSeen.add(f.k); chiefTitles.add(f.nt); } continue; }  // 최초 1회는 백로그 흘림
 
     let n = 0;
     for (const f of fresh.slice(0, 20)) {
@@ -423,7 +428,7 @@ async function runChiefPass() {
       const ok = await sendCat(topic,
         `${emoji} <b>[${label}]</b> <b>${esc(f.title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(f.ctx)}…`);
       if (!ok) break;                                       // 실패분은 다음 회차로 이월
-      chiefSeen.add(f.k);
+      chiefSeen.add(f.k); chiefTitles.add(f.nt);
       n++;
     }
     if (n) console.log(`  인물 검색 ${q}: ${n}건 발송`);

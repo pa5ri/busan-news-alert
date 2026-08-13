@@ -26,8 +26,8 @@ jobs:
           TG_TOPIC_GROUP: ${{ secrets.TG_TOPIC_GROUP }}
           TG_TOPICS: ${{ secrets.TG_TOPICS }}
         run: |
-          if [ "${{ inputs.mode }}" = "backfill" ]; then
-            node backfill-chief2.mjs
-          else
-            node e2e-rooms.mjs
-          fi
+          case "${{ inputs.mode }}" in
+            backfill) node backfill-chief2.mjs ;;
+            probe)    node probe-chief.mjs ;;
+            *)        node e2e-rooms.mjs ;;
+          esac
