@@ -130,8 +130,12 @@ const PARTY_CHIEF = [
 export function partyChief(item) {
   const t = String(item.t || item.title || "");
   const body = String(item.ctx || "");
+  // 제목 매치가 본문 매치보다 우선 — 제목이 「국민의힘 부산시당…」인데 본문에 박홍배가 스쳐
+  // 민주당 방으로 새는 것을 막는다(배열 순서만으로는 앞쪽 당이 이긴다).
   for (const { topic, name, org, emoji, label } of PARTY_CHIEF)
-    if (name.test(t) || name.test(body) || org.test(t)) return { topic, emoji, label };
+    if (name.test(t) || org.test(t)) return { topic, emoji, label };
+  for (const { topic, name, emoji, label } of PARTY_CHIEF)
+    if (name.test(body)) return { topic, emoji, label };
   return null;
 }
 
