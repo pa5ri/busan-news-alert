@@ -1,9 +1,5 @@
-// 일회성: 부산시의회 방 소급 업로드 (7/1~오늘)
-//  - 7/19~ : archive/*.jsonl에서 제목 매칭
-//  - 7/1~7/18 : 네이버 API 표적 검색(sim 정렬, pubDate 필터)
-//  - 같은 날 + 토큰 겹침 0.5 이상은 한 사안으로 묶고 대표 1건만 발송(대표 = ctx 보유 → 통신사 → 지역지)
-// 실행 후 git rm 할 것.
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+// 일회성 2차: 부산시의회 방 — 7/1~7/18 보충 (네이버 API HUB 표적 검색, 아카이브 이전 구간)
+// 1차(아카이브 7/19~)는 발송 완료. 이 스크립트는 그 이전 구간만 채운다. 실행 후 git rm.
 import { tokensOf } from "./insight.mjs";
 
 const { NAVER_ID, NAVER_SECRET, TG_BOT_TOKEN, TG_TOPIC_GROUP } = process.env;
@@ -12,8 +8,7 @@ const THREAD = TOPICS["시의회"];
 if (!THREAD) { console.error("TG_TOPICS에 시의회 없음"); process.exit(1); }
 
 const RE = /부산시의회|부산광역시의회|부산광역시\s?시의회|부산\s시의회|부산시의원|부산\s시의원/;
-const UNTIL = new Date(process.env.BACKFILL_UNTIL || "2026-08-13T13:55:00+09:00"); // 실시간 배선 배포 시각 — 이후분은 루프가 담당
-const FROM_NAVER = [new Date("2026-07-01T00:00:00+09:00"), new Date("2026-07-19T00:00:00+09:00")]; // [이상, 미만)
+const A = new Date("2026-07-01T00:00:00+09:00"), B = new Date("2026-07-19T00:00:00+09:00"); // [이상, 미만)
 
 const PRESS = {
   "yna.co.kr":"연합뉴스","yonhapnewstv.co.kr":"연합뉴스TV","newsis.com":"뉴시스","news1.kr":"뉴스1",
@@ -44,54 +39,36 @@ const normTitle = t => strip(t).replace(/\[(단독|속보|포토|영상|종합|1
 const kstDay = d => new Date(d.getTime()+9*3600*1000).toISOString().slice(0,10);
 const sleep = ms => new Promise(r=>setTimeout(r,ms));
 
-// ---- 수집 ----
-const items = []; // {t, url, pub:Date, ctx, name, wire}
-const seenKey = new Set(), seenNorm = new Set();
-function add(t, url, pub, ctx) {
-  if (!RE.test(t)) return;
-  if (!(pub instanceof Date) || isNaN(pub) || pub >= UNTIL) return;
-  const k = keyOf(url); if (seenKey.has(k)) return;
-  const n = normTitle(t); if (seenNorm.has(n)) return;
-  seenKey.add(k); seenNorm.add(n);
-  items.push({ t: strip(t), url, pub, ctx: strip(ctx||"").trim(), name: nameOf(url), wire: isWire(url) });
-}
-
-// (A) 아카이브 7/19~
-for (const f of readdirSync("archive").sort()) {
-  if (!/^2026-0[78]-\d\d\.jsonl$/.test(f)) continue;
-  if (f < "2026-07-19") continue;
-  for (const line of readFileSync("archive/"+f,"utf8").split("\n")) {
-    if (!line.trim()) continue;
-    let r; try { r = JSON.parse(line); } catch { continue; }
-    add(r.t, r.url, new Date(r.pub), r.ctx);
-  }
-}
-console.log("아카이브 수집:", items.length);
-
-// (B) 네이버 표적 검색 7/1~7/18
 const naverH = { "X-NCP-APIGW-API-KEY-ID": NAVER_ID, "X-NCP-APIGW-API-KEY": NAVER_SECRET };
-const QUERIES = ["부산시의회","부산시의원","부산광역시의회","부산시의회 개원","부산시의회 의장","부산시의회 원구성","부산시의회 임시회","부산시의회 전반기"];
-let naverAdded = 0;
+const QUERIES = ["부산시의회","부산시의원","부산시의회 임시회","부산시의회 본회의","부산시의회 조례",
+  "부산시의회 특위","부산시의회 의장","부산시의회 상임위","부산시의원 재검표","부산시의회 개원"];
+
+const items = []; const seenKey = new Set(), seenNorm = new Set();
 for (const q of QUERIES) {
-  for (const start of [1, 101, 201]) {
-    const u = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(q)}&display=100&start=${start}&sort=sim`;
-    let res; try { res = await fetch(u, { headers: naverH }); } catch { break; }
-    if (!res.ok) break;
-    const js = await res.json();
-    for (const it of js.items || []) {
-      const pub = new Date(it.pubDate);
-      if (pub < FROM_NAVER[0] || pub >= FROM_NAVER[1]) continue;
-      const before = items.length;
-      add(strip(it.title), it.originallink || it.link, pub, strip(it.description));
-      if (items.length > before) naverAdded++;
+  for (const sort of ["sim","date"]) {
+    for (let start = 1; start <= 1000; start += 100) {
+      const u = `https://naverapihub.apigw.ntruss.com/search/v1/news?query=${encodeURIComponent(q)}&display=100&start=${start}&sort=${sort}`;
+      let r; try { r = await fetch(u, { headers: naverH }); } catch { break; }
+      if (!r.ok) break;
+      const js = await r.json();
+      for (const it of js.items || []) {
+        const pub = new Date(it.pubDate);
+        if (isNaN(pub) || pub < A || pub >= B) continue;
+        const t = strip(it.title);
+        if (!RE.test(t)) continue;
+        const url = it.originallink || it.link;
+        const k = keyOf(url); if (seenKey.has(k)) continue;
+        const n = normTitle(t); if (seenNorm.has(n)) continue;
+        seenKey.add(k); seenNorm.add(n);
+        items.push({ t, url, pub, ctx: strip(it.description||"").trim(), name: nameOf(url), wire: isWire(url) });
+      }
+      await sleep(120);
+      if ((js.items||[]).length < 100) break;
     }
-    await sleep(150);
-    if ((js.items||[]).length < 100) break;
   }
 }
-console.log("네이버 추가(7/1~18):", naverAdded, "| 총:", items.length);
+console.log("수집(7/1~18):", items.length);
 
-// ---- 사안 클러스터 (같은 날 + 토큰 겹침 0.5) ----
 items.sort((a,b)=>a.pub-b.pub);
 const clusters = [];
 for (const it of items) {
@@ -107,7 +84,6 @@ for (const it of items) {
 }
 console.log("클러스터:", clusters.length);
 
-// ---- 발송 ----
 async function send(text) {
   const body = { chat_id: TG_TOPIC_GROUP, message_thread_id: THREAD, text, parse_mode: "HTML", disable_web_page_preview: true };
   for (let i = 0; i < 5; i++) {
@@ -121,7 +97,7 @@ async function send(text) {
   return false;
 }
 
-await send(`🏛 <b>부산시의회 방 개설 — 취임(7/1) 이후 관련 보도를 소급 정리해 올립니다.</b>\n제목에 부산시의회·부산시의원이 들어간 기사이며, 같은 사안은 대표 기사 1건으로 묶었습니다. 이후로는 실시간으로 올라옵니다.`);
+await send(`🏛 <b>7월 초·중순(7/1~7/18) 보충분입니다.</b>\n아카이브 시작(7/19) 이전 구간을 네이버 검색으로 채웠습니다. 위쪽의 7/20 이후 기사보다 시기가 앞선 점 참고해 주세요.`);
 await sleep(3500);
 
 let sent = 0;
