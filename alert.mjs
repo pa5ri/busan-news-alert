@@ -94,6 +94,31 @@ const seenTitles = new Set(state.titles || []);
 const chiefSeen = new Set(state.chiefSeen || []);
 const chiefTitles = new Set(state.chiefTitles || []);   // 같은 사건의 타 매체 재전송 억제(제목 계열)
 let firstRunChief = chiefSeen.size === 0;   // 최초 1회는 과거 백로그를 흘려보낸다
+
+// ---- 사안 중복 억제 (전 방 공통) ----
+// 제목 계열(normTitle) 비교는 헤드라인이 다르면 뚫린다. 최근 12시간 내 '실제 전송된' 기사와
+// 토큰 겹침이 크면(기본 0.7) 같은 사안의 재탕으로 보고 기록만 한다 — 먼저 온 매체(대개 통신사) 우선.
+// 단독·속보는 예외(새 사실 확률). 시당 방은 별도 24시간 창(chiefRecent)으로 추가 차단.
+let sentStories = (state.sentStories || []).filter(e => Date.now() - e.ts < 12 * 3600e3);
+let chiefRecent = (state.chiefRecent || []).filter(e => Date.now() - e.ts < 24 * 3600e3);
+const DUP_OVERLAP = Number(process.env.DUP_OVERLAP || 0.7);
+// 숫자 토큰 제외(여론조사류 수치 오탐 방지) + 중복 토큰 제거(같은 단어 2회 등장 시 이중 계산 방지)
+const dupToks = toks => [...new Set(toks.filter(t => !/^\d+$/.test(t)))];
+function storyDup(toks, list) {
+  const set = new Set(dupToks(toks));
+  for (const e of list) {
+    const et = dupToks(e.toks || []);
+    const m = Math.min(set.size, et.length);
+    if (m < 3) continue;                       // 토큰이 너무 적으면 판단 보류(오탐 방지)
+    let ov = 0; for (const x of et) if (set.has(x)) ov++;
+    if (ov / m >= DUP_OVERLAP) return true;
+  }
+  return false;
+}
+const chiefDup = (room, toks) => storyDup(toks, chiefRecent.filter(e => e.room === room));
+// 날씨 안내(온도·예보)는 하루 1건만 — 재해·사고성 제목은 제외
+const isWeatherInfo = t => /날씨|(아침|낮|오늘|내일|주말)\s?(최저|최고)?\s?기온/.test(t)
+  && !/태풍|경보|피해|침수|정전|사고|호우/.test(t);
 let firstRun = seen.size === 0;
 
 const naverH = { "X-NCP-APIGW-API-KEY-ID": NAVER_ID, "X-NCP-APIGW-API-KEY": NAVER_SECRET };
@@ -246,6 +271,9 @@ function saveState() {
     titles: [...seenTitles].slice(-STATE_CAP),
     chiefSeen: [...chiefSeen].slice(-2000),
     chiefTitles: [...chiefTitles].slice(-2000),
+    sentStories: sentStories.slice(-800),
+    chiefRecent: chiefRecent.slice(-300),
+    wxDate: state.wxDate || "",
     tgOffset: state.tgOffset || 0,
     briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
@@ -318,7 +346,7 @@ async function runOnce() {
   const carry = freshGroups.length - sendGroups.length;
   console.log(`[${new Date().toISOString().slice(11,19)}] 수집 ${items.length} | 신규 ${freshGroups.length} | 전송예정 ${sendGroups.length}${carry > 0 && !firstRun ? ` | 이월 ${carry}` : ""}${firstRun ? " (최초 실행)" : ""}`);
 
-  let sent = 0, recorded = 0;
+  let sent = 0, recorded = 0, dups = 0;
   for (const sg of sendGroups) {
     const it = sg.pick;
     const { name } = pressInfo(it.originallink || it.link);
@@ -332,15 +360,28 @@ async function runOnce() {
     const special = specialKind(rec);          // 인터뷰(시장)·르포·기고 — 전용 방 추가 발송
     const chief = partyChief(rec);             // 여야 시당위원장(박홍배·이성권) — 전용 방 추가 발송
     const council = councilNews(rec);          // 부산시의회·시의원 — 전용 방 추가 발송
+    const toks = tokensOf(title);
 
     // 매체 필터: 비메이저는 전송 없이 기록만 (아카이브·급증 감지·이슈 대장에는 전량 반영)
     // 단독·속보와 별도 관리 유형은 매체 불문 통과 (군소 매체 비중이 높은 유형)
     if (!MAJOR.has(name) && !scoopPass && !special && !chief && !council) {
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
-      recentSent.push({ ts: Date.now(), title, name, link, toks: tokensOf(title) });
+      recentSent.push({ ts: Date.now(), title, name, link, toks });
       archive(it, name, cat);
       recorded++;
+      continue;
+    }
+
+    // 사안 중복 억제: 12시간 내 이미 보낸 사안의 재탕(헤드라인만 다른 타 매체 버전)은 기록만.
+    // 날씨 안내는 하루 1건만(state.wxDate). 단독·속보는 두 억제 모두 예외.
+    const wxCapped = isWeatherInfo(title) && state.wxDate === kstDate(0);
+    if (!scoopPass && (storyDup(toks, sentStories) || wxCapped)) {
+      for (const g of sg.grp) seen.add(g.k);
+      seenTitles.add(sg.nt);
+      recentSent.push({ ts: Date.now(), title, name, link, toks });
+      archive(it, name, cat);
+      dups++;
       continue;
     }
 
@@ -353,7 +394,9 @@ async function runOnce() {
     for (const g of sg.grp) seen.add(g.k);
     seenTitles.add(sg.nt);
     sent++;
-    recentSent.push({ ts: Date.now(), title, name, link, toks: tokensOf(title) });   // 급증 감지용
+    recentSent.push({ ts: Date.now(), title, name, link, toks });   // 급증 감지용
+    sentStories.push({ ts: Date.now(), toks });                     // 사안 중복 억제용(12h)
+    if (isWeatherInfo(title)) state.wxDate = kstDate(0);            // 오늘의 날씨 슬롯 소진
     // 단독·속보 중 '부산 사안'만 별도 토픽에도 (중요 기사 전용 방)
     if (scoopPass) {
       const tag = isExclusive(title) ? "단독" : "속보";
@@ -368,9 +411,10 @@ async function runOnce() {
         `${SPECIAL_EMOJI[special]} <b>[${special}]</b> <b>${esc(clean2)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     // 여야 부산시당위원장 전용 방 (박홍배·이성권) — 분야 방과 같은 형식(맥락 단락 포함)
-    if (chief && !sg.grp.some(g => chiefSeen.has(g.k)) && !chiefTitles.has(sg.nt)) {
+    if (chief && !sg.grp.some(g => chiefSeen.has(g.k)) && !chiefTitles.has(sg.nt) && !chiefDup(chief.topic, toks)) {
       for (const g of sg.grp) chiefSeen.add(g.k);   // 같은 제목 계열 전체 — 인물 패스가 다른 매체 버전을 다시 집지 않게
       chiefTitles.add(sg.nt);
+      chiefRecent.push({ ts: Date.now(), room: chief.topic, toks });
       await sendCat(chief.topic,
         `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
@@ -382,7 +426,7 @@ async function runOnce() {
     archive(it, name, cat);
     if ((sent + recorded) % 10 === 0) saveState();   // 대량 처리 중 잡이 죽어도 중복 재전송을 최소화
   }
-  if (recorded) console.log(`  매체 필터: 전송 ${sent} · 기록만 ${recorded}`);
+  if (recorded || dups) console.log(`  매체 필터: 전송 ${sent} · 기록만 ${recorded}${dups ? ` · 재탕 억제 ${dups}` : ""}`);
   if (!firstRun && carry > 0)
     await send(`⏳ 신규 ${freshGroups.length}건 중 ${sent}건 전송 — 나머지는 이어서 처리됩니다.`);
 
@@ -417,6 +461,7 @@ async function runChiefPass() {
       if (!(title.includes(q) || ctx.includes(q))) continue;   // 질의어가 실제로 들어간 기사만
       const nt = normTitle(it.title);
       if (chiefTitles.has(nt)) { chiefSeen.add(k); continue; } // 같은 사건의 타 매체 버전
+      if (chiefDup(topic, tokensOf(title))) { chiefSeen.add(k); chiefTitles.add(nt); continue; } // 헤드라인만 다른 재탕
       fresh.push({ k, nt, it, title, ctx });
     }
     if (firstRunChief) { for (const f of fresh) { chiefSeen.add(f.k); chiefTitles.add(f.nt); } continue; }  // 최초 1회는 백로그 흘림
@@ -429,6 +474,7 @@ async function runChiefPass() {
         `${emoji} <b>[${label}]</b> <b>${esc(f.title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(f.ctx)}…`);
       if (!ok) break;                                       // 실패분은 다음 회차로 이월
       chiefSeen.add(f.k); chiefTitles.add(f.nt);
+      chiefRecent.push({ ts: Date.now(), room: topic, toks: tokensOf(f.title) });
       n++;
     }
     if (n) console.log(`  인물 검색 ${q}: ${n}건 발송`);
