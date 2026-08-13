@@ -10,9 +10,9 @@ for (const q of ["부산시의회","부산시의원","부산시의회 임시회"
     let minD = null, maxD = null, inWin = 0, inWinTitle = 0, total = 0;
     const samples = [];
     for (let start = 1; start <= 1000; start += 100) {
-      const u = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(q)}&display=100&start=${start}&sort=${sort}`;
+      const u = `https://naverapihub.apigw.ntruss.com/search/v1/news?query=${encodeURIComponent(q)}&display=100&start=${start}&sort=${sort}`;
       const r = await fetch(u, { headers: naverH });
-      if (!r.ok) { console.log(q, sort, "HTTP", r.status); break; }
+      if (!r.ok) { console.log(q, sort, "HTTP", r.status, (await r.text()).slice(0,120)); break; }
       const js = await r.json();
       for (const it of js.items || []) {
         total++;
