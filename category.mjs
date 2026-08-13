@@ -130,6 +130,18 @@ export function partyChief(item) {
   return null;
 }
 
+// ── 부산시의회 전용 방 ──
+// 조직명 + 개별 의원 활동(제목에 '부산시의원')을 함께 담는다 — 의원 발언·간담회·연구단체도
+// 시의회 동향의 일부(실측 25일: 조직명 148건 + 시의원 108건 ≈ 10건/일).
+// 제목 매칭만 사용(본문 매칭은 시정 일반 기사가 통째로 딸려옴 — 본문전용 374건 대부분 무관).
+const RE_COUNCIL = /부산시의회|부산광역시의회|부산광역시\s?시의회|부산\s시의회|부산시의원|부산\s시의원/;
+/** 시의회 방 판별. 해당 없으면 null. → { topic, emoji, label } (partyChief와 동일 형태) */
+export function councilNews(item) {
+  const t = String(item.t || item.title || "");
+  if (RE_COUNCIL.test(t)) return { topic: "시의회", emoji: "🏛", label: "부산시의회" };
+  return null;
+}
+
 // 분야별 이모지 (메시지 머리표)
 export const CAT_EMOJI = {
   "정치": "🗳", "경제": "💼", "사회": "👮", "생활/문화": "🏡",

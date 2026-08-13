@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews } from "./category.mjs";
 
 const KEYWORD = "부산";
 // 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
@@ -325,10 +325,11 @@ async function runOnce() {
     const scoopPass = isScoop(title) && isBusanRelevant(rec);
     const special = specialKind(rec);          // 인터뷰(시장)·르포·기고 — 전용 방 추가 발송
     const chief = partyChief(rec);             // 여야 시당위원장(박홍배·이성권) — 전용 방 추가 발송
+    const council = councilNews(rec);          // 부산시의회·시의원 — 전용 방 추가 발송
 
     // 매체 필터: 비메이저는 전송 없이 기록만 (아카이브·급증 감지·이슈 대장에는 전량 반영)
     // 단독·속보와 별도 관리 유형은 매체 불문 통과 (군소 매체 비중이 높은 유형)
-    if (!MAJOR.has(name) && !scoopPass && !special && !chief) {
+    if (!MAJOR.has(name) && !scoopPass && !special && !chief && !council) {
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks: tokensOf(title) });
@@ -369,6 +370,11 @@ async function runOnce() {
     if (chief) {
       await sendCat(chief.topic,
         `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
+    }
+    // 부산시의회 전용 방 (조직 + 개별 의원 활동)
+    if (council) {
+      await sendCat(council.topic,
+        `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     archive(it, name, cat);
     if ((sent + recorded) % 10 === 0) saveState();   // 대량 처리 중 잡이 죽어도 중복 재전송을 최소화
