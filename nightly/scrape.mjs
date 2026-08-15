@@ -91,14 +91,19 @@ async function kbsBusan() {
 // ================= 브라우저 기반 소스들 =================
 const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox","--disable-dev-shm-usage","--ignore-certificate-errors"] });
 async function withPage(url, fn, wait = 1500) {
-  // 느린 응답(해외 러너) 대비: 2회 시도, 2차는 domcontentloaded로 완화
+  // 느린 응답·간헐 차단(해외 러너) 대비: URL 변형을 돌며 최대 4회, 점증 대기(0/3/8/15초).
+  // 부산일보 ERR_EMPTY_RESPONSE·국제신문 ERR_BLOCKED_BY_CLIENT가 하룻밤 걸러 재발해 강화(2026-08-15).
+  const urls = Array.isArray(url) ? url : [url];
+  const BACKOFF = [0, 3000, 8000, 15000];
   let lastErr;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (BACKOFF[attempt]) await new Promise(r => setTimeout(r, BACKOFF[attempt]));
     const p = await browser.newPage();
-    await p.setUserAgent(UA);
     try {
-      await p.goto(url, { waitUntil: attempt === 1 ? "networkidle2" : "domcontentloaded", timeout: 60000 });
-      await new Promise(r => setTimeout(r, attempt === 1 ? wait : wait + 2000));
+      await p.setUserAgent(UA);
+      await p.setExtraHTTPHeaders({ "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.5" });
+      await p.goto(urls[attempt % urls.length], { waitUntil: attempt === 0 ? "networkidle2" : "domcontentloaded", timeout: 60000 });
+      await new Promise(r => setTimeout(r, attempt === 0 ? wait : wait + 2000));
       return await fn(p);
     } catch (e) { lastErr = e; }
     finally { await p.close(); }
@@ -296,11 +301,11 @@ try {
     },
   };
   try {
-    const items = await withPage("http://www.kookje.co.kr/", p => p.evaluate(`(${paperPick.kookje.toString()})(${JSON.stringify([D, D_NEXT])})`));
+    const items = await withPage(["https://www.kookje.co.kr/", "http://www.kookje.co.kr/"], p => p.evaluate(`(${paperPick.kookje.toString()})(${JSON.stringify([D, D_NEXT])})`));
     push("지면", "국제신문", items.slice(0, 40));
   } catch (e) { push("지면","국제신문",[],"실패: "+e.message); }
   try {
-    const items = await withPage("https://www.busan.com/", p => p.evaluate(`(${paperPick.busanilbo.toString()})(${JSON.stringify([D_PREV, D])})`));
+    const items = await withPage(["https://www.busan.com/", "https://busan.com/"], p => p.evaluate(`(${paperPick.busanilbo.toString()})(${JSON.stringify([D_PREV, D])})`));
     push("지면", "부산일보", items.slice(0, 40));
   } catch (e) { push("지면","부산일보",[],"실패: "+e.message); }
 } finally {
