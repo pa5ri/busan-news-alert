@@ -27,6 +27,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"          # 매시간 npm ci 반복 — 캐시로 재기동 공백 단축
       - name: 의존성 설치
         run: npm ci --no-audit --no-fund
       - name: 2분 간격 폴링 (58분간)
