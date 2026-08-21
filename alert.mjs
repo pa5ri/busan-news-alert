@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
 // 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
@@ -104,14 +104,14 @@ let chiefRecent = (state.chiefRecent || []).filter(e => Date.now() - e.ts < 24 *
 const DUP_OVERLAP = Number(process.env.DUP_OVERLAP || 0.7);
 // 숫자 토큰 제외(여론조사류 수치 오탐 방지) + 중복 토큰 제거(같은 단어 2회 등장 시 이중 계산 방지)
 const dupToks = toks => [...new Set(toks.filter(t => !/^\d+$/.test(t)))];
-function storyDup(toks, list) {
+function storyDup(toks, list, thr = DUP_OVERLAP) {
   const set = new Set(dupToks(toks));
   for (const e of list) {
     const et = dupToks(e.toks || []);
     const m = Math.min(set.size, et.length);
     if (m < 3) continue;                       // 토큰이 너무 적으면 판단 보류(오탐 방지)
     let ov = 0; for (const x of et) if (set.has(x)) ov++;
-    if (ov / m >= DUP_OVERLAP) return true;
+    if (ov / m >= thr) return true;
   }
   return false;
 }
@@ -196,12 +196,14 @@ async function send(text) {
   return ok;
 }
 
-// ---- 보도 급증 감지 ----
-// 최근 1시간 전송분에서 같은 키워드(1~2어절)가 몰리면 단독·속보 방에 경보.
-// 기준: 1시간 내 SURGE_MIN건 이상 && 평소 하루치의 절반 이상 (평시 다빈도 주제의 오탐 방지).
-// 같은 키는 하루 1회만 (state.surgedKeys).
+// ---- 보도 급증 감지 (사안 단위, 2026-08-21 재설계) ----
+// 이전 방식(단어·2어절 키마다 알림)은 같은 사안에서 단어 조각마다 문턱을 따로 넘겨 한 사안에 11건이 나갔다.
+// 지금은 ① 최근 1시간 기사를 토큰 겹침으로 '사안' 묶음 → ② 묶음이 SURGE_MIN건↑ && 평소 하루치 절반↑이면 알림
+//        ③ 같은 사안은 하루 1회, 건수가 2배로 불어날 때만 "확산 갱신" → ④ 주기당 최대 1건
+// 메시지에는 해석 블록(평소 대비 배수·매체군·부산 관련성·이슈 대장 연결·기준)을 붙인다.
 const SURGE_MIN = Number(process.env.SURGE_MIN || 8);
-let recentSent = [];      // {ts, title, name, link, toks}
+const SURGE_WINDOW = 3600e3;
+let recentSent = (state.recentSent || []).filter(r => Date.now() - r.ts < SURGE_WINDOW);   // {ts,title,name,link,toks,sent}
 let surgeBase = null;     // 키 → 최근 7일 하루 평균 보도량
 function initSurgeBase() {
   surgeBase = new Map();
@@ -216,42 +218,167 @@ function initSurgeBase() {
     for (const [k, v] of surgeBase) surgeBase.set(k, v / 7);
   } catch (e) { console.error("급증 기준선 계산 실패:", e.message); }
 }
+const TIER = [
+  ["통신", new Set(["연합뉴스", "뉴시스", "뉴스1", "연합뉴스TV"])],
+  ["방송", new Set(["KBS", "MBC", "SBS", "JTBC", "TV조선", "채널A", "MBN", "YTN", "한국경제TV"])],
+  ["부산지역", new Set(["부산일보", "국제신문", "KNN", "부산MBC"])],
+];
+function tierLine(rs) {
+  const names = new Set(rs.map(r => r.name));
+  const c = { 통신: 0, 방송: 0, 부산지역: 0, "중앙·경제지": 0, 기타: 0 };
+  const locals = [];
+  for (const n of names) {
+    const t = TIER.find(([, s]) => s.has(n));
+    if (t) { c[t[0]]++; if (t[0] === "부산지역") locals.push(n); }
+    else if (MAJOR.has(n)) c["중앙·경제지"]++;
+    else c.기타++;
+  }
+  const parts = Object.entries(c).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`);
+  // 해석: 주요 매체(통신·방송·중앙·부산지역)가 절반 이상이면 의제화된 사안, 아니면 보도자료 일괄 배포 양상
+  const majorN = names.size - c.기타;
+  const read = names.size >= 4
+    ? (majorN / names.size >= 0.5 ? " → 주요 매체가 주도하는 의제" : " → 군소·전문지 위주, 보도자료 일괄 배포 양상")
+    : "";
+  return `🗞 매체 ${names.size}곳 — ${parts.join(" · ")}${locals.length ? ` (${locals.join("·")})` : ""}${read}`;
+}
+const hm = ts => { const d = new Date(ts + 9 * 3600e3); return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`; };
+const ovl = (a, b) => { const s = new Set(a); let n = 0; for (const x of b) if (s.has(x)) n++; return n / Math.max(1, Math.min(s.size, new Set(b).size)); };
+// 최근 기사들을 사안으로 묶는다 — 첫 기사(씨앗)의 토큰과 0.5 이상 겹치면 같은 사안 (눈덩이 병합 방지)
+function clusterRecent(rs) {
+  const cl = [];
+  for (const r of rs) {
+    const t = dupToks(r.toks || []);
+    if (t.length < 2) continue;
+    const home = cl.find(c => ovl(c.seed, t) >= 0.5);
+    if (home) home.items.push(r); else cl.push({ seed: t, items: [r] });
+  }
+  return cl;
+}
+// 사안 서명(상위 빈도 토큰 12개)·대표 제목·기준 키
+function describeCluster(c) {
+  const freq = new Map();
+  for (const r of c.items) for (const w of new Set(dupToks(r.toks || []))) freq.set(w, (freq.get(w) || 0) + 1);
+  const sig = [...freq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([w]) => w);
+  // 대표 = 다른 기사와 토큰을 가장 많이 공유하는 기사(동률이면 통신사·먼저 온 것)
+  let rep = c.items[0], best = -1;
+  for (const r of c.items) {
+    // 공유 토큰 수 + 주요 매체 가산(+1) + 통신사 가산(+0.5) + 속보 말머리 감점(-0.5: 대표 제목은 정제된 본기사가 낫다)
+    const score = dupToks(r.toks || []).filter(w => (freq.get(w) || 0) >= 2).length
+      + (MAJOR.has(r.name) ? 1 : 0) + (TIER[0][1].has(r.name) ? 0.5 : 0) - (isScoop(r.title) ? 0.5 : 0);
+    if (score > best) { best = score; rep = r; }
+  }
+  // 기준선 키: 가장 많이 공유된 2어절, 없으면 1어절
+  const bi = new Map();
+  for (const r of c.items) { const t = r.toks || []; const seenB = new Set(); for (let i = 0; i < t.length - 1; i++) { const k = t[i] + " " + t[i + 1]; if (seenB.has(k)) continue; seenB.add(k); bi.set(k, (bi.get(k) || 0) + 1); } }
+  const topBi = [...bi.entries()].sort((a, b) => b[1] - a[1])[0];
+  const key = topBi && topBi[1] >= 3 ? topBi[0] : sig[0];
+  return { sig, rep, key, first: c.items.reduce((a, b) => a.ts < b.ts ? a : b) };
+}
+// 부산 관련성 한 줄 해석
+function busanNote(items) {
+  const titled = items.filter(r => BUSAN_PLACE.test(r.title) || BUSAN_ORG.test(r.title));
+  if (titled.length) {
+    const m = titled[0].title.match(BUSAN_ORG) || titled[0].title.match(BUSAN_PLACE);
+    return `📍 부산 사안 — ${items.length}건 중 ${titled.length}건이 제목에 부산 언급${m ? ` ('${m[0]}')` : ""}`;
+  }
+  return `📍 제목엔 부산 없음 — 전국 사안에 부산이 본문으로 걸린 묶음(지역 영향은 본문 확인 필요)`;
+}
+// 이슈 대장 연결 — 30분 캐시
+let ledgerCache = { ts: 0, l: null };
+function ledgerNote(sig) {
+  if (Date.now() - ledgerCache.ts > 1800e3) { try { ledgerCache = { ts: Date.now(), l: loadLedger() }; } catch { ledgerCache.ts = Date.now(); } }
+  const l = ledgerCache.l; if (!l) return "";
+  let best = null, bs = 0;
+  for (const iss of l.issues) {
+    if (iss.status === "종결" || !(iss.tokens || []).length) continue;
+    let shared = 0; for (const w of sig) if (iss.tokens.includes(w)) shared++;
+    const ratio = shared / Math.max(1, Math.min(sig.length, iss.tokens.length));
+    if (((ratio >= 0.45 && shared >= 2) || shared >= 4) && shared > bs) { best = iss; bs = shared; }
+  }
+  if (!best) return "🆕 이슈 대장에 없던 새 사안 — 오늘 물량이면 내일 아침 브리핑에 신규 이슈로 올라올 가능성이 큽니다";
+  const total = Object.values(best.daily || {}).reduce((a, b) => a + b, 0);
+  const days = Math.round((Date.parse(kstDate(0)) - Date.parse(best.firstSeen)) / 864e5) + 1;
+  const md = s => `${Number(s.slice(5, 7))}/${Number(s.slice(8, 10))}`;
+  return `🗂 이슈 대장: 「${esc(String(best.label).slice(0, 34).trim())}」 ${md(best.firstSeen)}부터 추적 · 오늘 ${days}일째 · 어제까지 누적 ${total}건 (${best.status})`;
+}
+function surgeMessage(c, d, avg, prev) {
+  const n = c.items.length;
+  const ratio = avg >= 0.5 ? (n / avg) : 0;
+  const scale = avg >= 1 ? `📊 평소 이 주제는 하루 ${Math.round(avg)}건 → 지금은 1시간에 ${n}건 (하루치의 ${ratio.toFixed(1)}배)`
+                         : `📊 평소 거의 보도되지 않던 주제가 1시간에 ${n}건 — 새로 떠오른 사안`;
+  const head = prev ? `📈 <b>확산 갱신</b> — ${prev.count}건 → ${n}건` : `📈 <b>보도 급증</b> — 1시간 ${n}건`;
+  const firstTag = isExclusive(d.first.title) ? "(단독으로 시작) " : isScoop(d.first.title) ? "(속보로 시작) " : "";
+  const picks = [];
+  // 대표 기사 3건 — 매체가 겹치지 않게(같은 매체의 속보 재탕이 목록을 채우는 것 방지)
+  const pushPick = r => { if (picks.length < 3 && !picks.some(p => p === r || p.name === r.name)) picks.push(r); };
+  pushPick(d.rep);
+  c.items.filter(r => TIER[2][1].has(r.name)).forEach(pushPick);     // 부산지역지 우선
+  c.items.filter(r => TIER[0][1].has(r.name)).forEach(pushPick);     // 통신사
+  c.items.forEach(pushPick);
+  const list = picks.map((r, i) => `${i + 1}. <b>[${esc(r.name)}]</b> ${esc(String(r.title).slice(0, 60))}\n${r.link}`).join("\n");
+  return [
+    head,
+    `<b>${esc(String(d.rep.title).slice(0, 80))}</b>`,
+    "",
+    `⏱ 첫 보도 ${hm(d.first.ts)} ${esc(d.first.name)} ${firstTag}→ 1시간 ${n}건`,
+    scale,
+    tierLine(c.items),
+    busanNote(c.items),
+    ledgerNote(d.sig),
+    "",
+    list,
+    "",
+    `<i>ℹ️ 기준: 1시간 안에 같은 사안 ${SURGE_MIN}건↑이면서 평소 하루치의 절반을 넘을 때. 같은 사안은 건수가 2배로 불어날 때만 다시 알립니다.</i>`,
+  ].filter(s => s !== null && s !== undefined).join("\n");
+}
 async function checkSurge() {
   if (!surgeBase) initSurgeBase();
   const now = Date.now();
-  recentSent = recentSent.filter(r => now - r.ts < 3600e3);
+  recentSent = recentSent.filter(r => now - r.ts < SURGE_WINDOW);
   const today = kstDate(0);
-  if (state.surgedDate !== today) { state.surgedDate = today; state.surgedKeys = []; }
-  const counts = new Map();
-  for (const r of recentSent) {
-    const seenK = new Set();
-    const add = k => { if (seenK.has(k)) return; seenK.add(k); if (!counts.has(k)) counts.set(k, []); counts.get(k).push(r); };
-    r.toks.forEach(add);
-    for (let i = 0; i < r.toks.length - 1; i++) add(r.toks[i] + " " + r.toks[i + 1]);
+  if (state.surgedDate !== today) { state.surgedDate = today; state.surged = []; }
+  state.surged = state.surged || [];
+  const clusters = clusterRecent(recentSent).filter(c => c.items.length >= SURGE_MIN).sort((a, b) => b.items.length - a.items.length);
+  let fired = false;
+  for (const c of clusters) {
+    const d = describeCluster(c);
+    const avg = surgeBase.get(d.key) || 0;
+    if (c.items.length < Math.max(SURGE_MIN, avg * 0.5)) continue;
+    const prev = state.surged.find(s => ovl(s.sig, d.sig) >= 0.5);
+    if (prev && c.items.length < prev.count * 2) continue;     // 이미 알린 사안 — 2배 전엔 침묵
+    if (fired) continue;                                        // 주기당 1건
+    await sendCat("단독·속보", surgeMessage(c, d, avg, prev));
+    if (prev) { prev.count = c.items.length; prev.ts = now; }
+    else state.surged.push({ sig: d.sig, label: String(d.rep.title).slice(0, 60), count: c.items.length, ts: now });
+    fired = true;
+    console.log(`📈 급증 감지(${prev ? "갱신" : "신규"}): ${d.rep.title.slice(0, 40)} — ${c.items.length}건/시간`);
   }
-  const cands = [...counts.entries()]
-    .filter(([k, rs]) => rs.length >= Math.max(SURGE_MIN, (surgeBase.get(k) || 0) * 0.5)
-                      && !(state.surgedKeys || []).includes(k))
-    .sort((a, b) => b[1].length - a[1].length || b[0].length - a[0].length);
-  const picked = [];
-  for (const [k, rs] of cands) {
-    // 같은 기사군을 다른 키가 중복 보고하지 않게 — 이미 뽑힌 것과 기사 60% 이상 겹치면 흡수
-    if (picked.some(([, prs]) => rs.filter(r => prs.includes(r)).length >= rs.length * 0.6)) {
-      state.surgedKeys.push(k);
-      continue;
-    }
-    picked.push([k, rs]);
-    if (picked.length >= 2) break;
-  }
-  for (const [k, rs] of picked) {
-    state.surgedKeys.push(k);
-    const avg = surgeBase.get(k) || 0;
-    const sample = rs.slice(-3).map((r, i) => `${i + 1}. <b>[${esc(r.name)}]</b> ${esc(String(r.title).slice(0, 50))}\n${r.link}`);
+  await trackScoopSpread();
+  if (fired) saveState();
+}
+
+// ---- 단독 확산 추적 ----
+// [단독]이 방에 올라간 뒤 6시간 안에 타 매체(주요 매체 전송분 기준) 3곳 이상이 같은 사안을 받아쓰면 알린다.
+// "단독이 먹혔는가"는 그 자체로 신호 — 받아쓴 매체 수·첫 후속까지 걸린 시간을 함께 적는다.
+async function trackScoopSpread() {
+  const now = Date.now();
+  state.scoopTrack = (state.scoopTrack || []).filter(s => now - s.ts < 6 * 3600e3);
+  for (const s of state.scoopTrack) {
+    if (s.reported || now - s.ts < 15 * 60e3) continue;
+    const fol = sentStories.filter(e => e.ts > s.ts && e.name && e.name !== s.name && ovl(s.toks, e.toks || []) >= 0.5);
+    const names = [...new Set(fol.map(e => e.name))];
+    if (names.length < 3) continue;
+    const firstFol = fol.reduce((a, b) => a.ts < b.ts ? a : b);
+    const mins = Math.round((firstFol.ts - s.ts) / 60e3);
     await sendCat("단독·속보",
-      `📈 <b>보도 급증: ${esc(k)}</b>\n최근 1시간 ${rs.length}건${avg >= 1 ? ` — 평소 하루 ${Math.round(avg)}건 규모` : " — 평소 보도가 드물던 주제"}\n\n${sample.join("\n\n")}`);
-    console.log(`📈 급증 감지: ${k} — ${rs.length}건/시간`);
+      `🔁 <b>단독 확산</b> — ${esc(s.name)} 단독을 ${names.length}개 매체가 받아썼습니다\n` +
+      `<b>${esc(s.title)}</b>\n${s.link}\n\n` +
+      `⏱ 단독 ${hm(s.ts)} → 첫 후속 ${hm(firstFol.ts)} (${mins}분 뒤, ${esc(firstFol.name)}) → 지금까지 ${fol.length}건\n` +
+      `🗞 받아쓴 매체: ${esc(names.slice(0, 8).join("·"))}${names.length > 8 ? " 외" : ""}\n\n` +
+      `<i>ℹ️ 단독 보도 뒤 6시간 안에 주요 매체 3곳 이상이 같은 사안을 다루면 알립니다. 확산 속도가 빠를수록 의제화 가능성이 큽니다.</i>`);
+    s.reported = true;
+    console.log(`🔁 단독 확산: ${s.title.slice(0, 40)} — ${names.length}개 매체`);
   }
-  if (picked.length) saveState();
 }
 
 // ---- 아카이브 (인사이트 분석용 축적 — archive/YYYY-MM-DD.jsonl, KST 날짜 기준) ----
@@ -284,7 +411,9 @@ function saveState() {
     briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
     surgedDate: state.surgedDate || "",
-    surgedKeys: state.surgedKeys || [],
+    surged: (state.surged || []).slice(-50),
+    scoopTrack: (state.scoopTrack || []).slice(-50),
+    recentSent: recentSent.filter(r => Date.now() - r.ts < SURGE_WINDOW).map(r => ({ ts: r.ts, title: r.title, name: r.name, link: r.link, toks: r.toks })),
     edSeen: state.edSeen || [],
     edInit: state.edInit || false,
     ordSno: state.ordSno || 0,
@@ -383,7 +512,9 @@ async function runOnce() {
     // 날씨 안내는 하루 1건만(state.wxDate), 의례성(포토 캡션·운세·일정·부고류)은 상시 기록만.
     // 단독·속보는 모든 억제에서 예외.
     const wxCapped = isWeatherInfo(title) && state.wxDate === kstDate(0);
-    if (!scoopPass && (storyDup(toks, sentStories) || wxCapped || isCeremonial(title))) {
+    // 단독·속보도 '거의 같은 제목'(0.8↑)의 재탕은 막는다 — 2026-08-21 실측: 속보 21건 중 8건이 동일 속보의 매체별 재전송
+    const dupHit = storyDup(toks, sentStories, scoopPass ? 0.8 : DUP_OVERLAP);
+    if (dupHit || (!scoopPass && (wxCapped || isCeremonial(title)))) {
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks });
@@ -402,14 +533,25 @@ async function runOnce() {
     seenTitles.add(sg.nt);
     sent++;
     recentSent.push({ ts: Date.now(), title, name, link, toks });   // 급증 감지용
-    sentStories.push({ ts: Date.now(), toks });                     // 사안 중복 억제용(12h)
+    sentStories.push({ ts: Date.now(), toks, name, t: title.slice(0, 60) });   // 사안 중복 억제(12h) + 단독 확산 추적
     if (isWeatherInfo(title)) state.wxDate = kstDate(0);            // 오늘의 날씨 슬롯 소진
     // 단독·속보 중 '부산 사안'만 별도 토픽에도 (중요 기사 전용 방)
     if (scoopPass) {
       const tag = isExclusive(title) ? "단독" : "속보";
       const clean = title.replace(/\[(단독|속보)\]\s*/g, "").trim();
+      // 해석 블록: 부산 관련성 · 이슈 대장 연결(연속 사안인지, 새 사안인지) · 단독이면 확산 추적 안내
+      const bm = title.match(BUSAN_ORG) || title.match(BUSAN_PLACE);
+      const why = [
+        bm ? `📍 부산 사안 — 제목에 '${esc(bm[0])}'` : `📍 제목엔 부산 없음 — 본문에 부산 기관·지명이 주체로 등장해 선별`,
+        ledgerNote(dupToks(toks)),
+        tag === "단독" ? `🔎 후속 확산 자동 추적 중 — 6시간 안에 주요 매체 3곳↑이 받아쓰면 알려드립니다` : null,
+      ].filter(Boolean).join("\n");
       await sendCat("단독·속보",
-        `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…`);
+        `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…\n\n${why}`);
+      if (tag === "단독") {
+        state.scoopTrack = state.scoopTrack || [];
+        state.scoopTrack.push({ ts: Date.now(), title: clean.slice(0, 70), name, link, toks: dupToks(toks), reported: false });
+      }
     }
     // 인터뷰(시장)·르포·기고 전용 방
     if (special) {
