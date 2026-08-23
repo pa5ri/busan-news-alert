@@ -895,12 +895,14 @@ async function sendWeeklyReport() {
   const items = loadDays(dates);
   if (!items.length) return;
   const wk = ["일","월","화","수","목","금","토"];
+  // 전재수 언급 = 제목 또는 본문 맥락(ctx)에 '전재수' (2026-08-24 사용자 요청: 일자별·총계 병기)
+  const mentions = arr => arr.filter(it => /전재수/.test(`${it.t || ""} ${it.ctx || ""}`)).length;
   const perDay = dates.map(dt => {
-    const n = loadDays([dt]).length, wd = wk[new Date(dt + "T12:00:00Z").getUTCDay()];
-    return `· ${dt.slice(5)}(${wd}) ${n.toLocaleString()}건`;
+    const day = loadDays([dt]), wd = wk[new Date(dt + "T12:00:00Z").getUTCDay()];
+    return `· ${dt.slice(5)}(${wd}) ${day.length.toLocaleString()}건 (전재수 언급 ${mentions(day).toLocaleString()}건)`;
   });
   const list = topIssues(items, 20);
-  const head = `📚 <b>주간 누적 리포트</b>\n<b>${dates[0].replace(/-/g, ".")}(일) ~ ${dates[dates.length-1].replace(/-/g, ".")}(토)</b>\n총 <b>${items.length.toLocaleString()}건</b>\n\n<b>[일자별]</b>\n${perDay.join("\n")}`;
+  const head = `📚 <b>주간 누적 리포트</b>\n<b>${dates[0].replace(/-/g, ".")}(일) ~ ${dates[dates.length-1].replace(/-/g, ".")}(토)</b>\n총 <b>${items.length.toLocaleString()}건</b> (전재수 언급 총 <b>${mentions(items).toLocaleString()}건</b>)\n\n<b>[일자별]</b>\n${perDay.join("\n")}`;
   // 키워드 아래에 대표 기사·매체를 함께 (formatRanking이 맥락 줄까지 만들어 준다)
   const rankMsgs = formatRanking(list, items.length, 20, `주간 이슈 TOP 20`);
   for (const dest of destsFor("브리핑")) {
