@@ -529,9 +529,12 @@ async function runOnce() {
     const msg = `${CAT_EMOJI[cat] || "📰"} <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
     // 부산시의회 기사는 분야방(정치 등)에 보내지 않고 시의회방에만 — 두 방 중복 제거(2026-08-23 사용자 요청).
     // 아카이브의 분야 태그(cat)는 그대로라 브리핑·통계에는 영향 없음.
+    // 기고·칼럼도 분야방 대신 기고방에만(2026-08-24 사용자 요청, 중복 제거). 말머리 괄호는 떼되 제목 뒤 괄호([○○의 시론])는 그대로.
     const primary = council
       ? [council.topic, `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
-      : [cat, msg];
+      : special === "기고"
+        ? ["기고", `${SPECIAL_EMOJI["기고"]} <b>[기고·칼럼]</b> <b>${esc(title.replace(/^\[[^\]]*\]\s*/, "").trim() || title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
+        : [cat, msg];
     if (!await sendCat(primary[0], primary[1])) {   // 실패분은 미표시로 남겨 다음 회차에 재시도
       console.error(`이번 회차 중단 — 잔여분은 다음 회차로 이월`);
       break;
@@ -555,8 +558,8 @@ async function runOnce() {
         state.scoopTrack.push({ ts: Date.now(), title: clean.slice(0, 70), name, link, toks: dupToks(toks), reported: false });
       }
     }
-    // 인터뷰(시장)·르포·기고 전용 방
-    if (special) {
+    // 인터뷰(시장)·르포 전용 방 (기고·칼럼은 위에서 기고방으로 '대신' 발송됨 — 분야방 중복 없음)
+    if (special && special !== "기고") {
       const clean2 = title.replace(/^\[[^\]]{0,12}(인터뷰|르포|기고)[^\]]{0,12}\]\s*/, "").trim() || title;
       await sendCat(special,
         `${SPECIAL_EMOJI[special]} <b>[${special}]</b> <b>${esc(clean2)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
