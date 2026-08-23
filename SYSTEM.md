@@ -51,6 +51,7 @@
 | state.json | seen/titles(중복 방지), tgOffset/briefOffset, briefedFor, surged*, edSeen/edInit. 워크플로가 커밋 |
 | issues.json | 이슈 대장. **splice 금지**(led: 버튼이 배열 인덱스 참조) |
 | archive/YYYY-MM-DD.jsonl | 전량 아카이브 {t,src,cat,pub,url,ctx}. 브리핑·대장·통계의 원천 |
+| archive/jeon/YYYY-MM-DD.jsonl | **전재수 언급 색인**(2026-08-23) — 10분마다 네이버 '전재수' 직접 검색 URL. 모집단 아님, 꼬리표용. 집계 규칙 = 제목·요약에 이름 OR 색인에 URL(`isJeon`). 요약문(200자)만 보면 언급의 36%를 놓친다(실측) |
 | CHANGELOG.md | 변경 이력. 맨 위에 추가 → changelog.yml이 「변경이력」 방에 자동 중계 |
 
 워크플로: alert.yml(본 루프+자가연쇄) / watchdog.yml(20분마다 루프 생존 확인, 죽었으면 재가동) / nightly.yml(가드로 하루 1회) / changelog.yml(CHANGELOG 푸시 시 맨 위 항목 중계).

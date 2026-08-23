@@ -407,6 +407,9 @@ function saveState() {
     sentStories: sentStories.slice(-800),
     chiefRecent: chiefRecent.slice(-300),
     wxDate: state.wxDate || "",
+    jeonSeen: [...jeonSeen].slice(-4000),
+    jeonInit: !!state.jeonInit,
+    jeonLast,
     tgOffset: state.tgOffset || 0,
     briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
@@ -824,7 +827,8 @@ async function sendJaesooSection(dest, dateStr, items) {
   const jjs = topStories(items, 5, { focus: "전재수" });
   if (!jjs.length) return;
   const lines = jjs.map((s, i) => `<b>${i + 1}. ${esc(String(s.headline).slice(0, 60))}</b>\n    📰 ${s.count}건`);
-  const cnt = items.filter(it => /전재수/.test(it.t + " " + (it.ctx || ""))).length;
+  const jeonSet = loadJeonUrls([kstDate(-2), kstDate(-1), kstDate(0)]);   // 색인 기준(발행일)과 아카이브 날짜의 경계 차이 흡수
+  const cnt = items.filter(it => isJeon(it, jeonSet)).length;
   await tg(BRIEF_TOKEN, "sendMessage", {
     ...dest, parse_mode: "HTML", disable_web_page_preview: true,
     text: `🔎 <b>전재수 시장 관련</b> (어제 ${cnt}건)\n\n${lines.join("\n\n")}`,
@@ -889,14 +893,66 @@ async function maybeMorningBrief() {
   if (d.getUTCDay() === 0) await sendWeeklyReport();
 }
 
+// ---- 전재수 언급 색인 (모집단은 그대로, 꼬리표만) ----
+// 문제(2026-08-23 실측): 수집 기사 486건 중 212건(36%)이 전재수를 본문 깊숙이 언급해 요약문(200자)엔 없어서 집계에서 빠졌다.
+// 해법: 10분마다 네이버에 '전재수'를 직접 검색(본문 색인)해 URL을 archive/jeon/YYYY-MM-DD.jsonl 에 쌓고,
+//       집계 시 "제목·요약에 전재수 OR 색인에 URL"을 언급으로 본다. 총 건수(모집단)는 변하지 않는다.
+// 첫 실행은 1,000건 한도까지 거슬러 올라가 지난 열흘치를 채운다(state.jeonInit).
+const JEON_INTERVAL_MS = 10 * 60e3;
+const normUrl = u => String(u || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/#.*$/, "").replace(/\/$/, "");
+const jeonSeen = new Set(state.jeonSeen || []);
+let jeonLast = state.jeonLast || 0;
+async function runJeonIndex() {
+  if (Date.now() - jeonLast < JEON_INTERVAL_MS) return;
+  jeonLast = Date.now();
+  const pages = state.jeonInit ? [1] : [1, 101, 201, 301, 401, 501, 601, 701, 801, 901];
+  let added = 0;
+  for (const start of pages) {
+    let j;
+    try {
+      const r = await fetch(`https://naverapihub.apigw.ntruss.com/search/v1/news?query=${encodeURIComponent("전재수")}&display=100&start=${start}&sort=date`, { headers: naverH });
+      if (!r.ok) { console.error("전재수 색인 검색 실패:", r.status); break; }
+      j = await r.json();
+    } catch (e) { console.error("전재수 색인 오류:", e.message); break; }
+    for (const it of j.items || []) {
+      const url = it.originallink || it.link, k = normUrl(url);
+      if (!k || jeonSeen.has(k)) continue;
+      jeonSeen.add(k);
+      const day = new Date(new Date(it.pubDate).getTime() + 9 * 3600e3).toISOString().slice(0, 10);
+      try {
+        mkdirSync("archive/jeon", { recursive: true });
+        appendFileSync(`archive/jeon/${day}.jsonl`, JSON.stringify({ url, link: it.link, t: strip(it.title), pub: it.pubDate }) + "\n");
+        added++;
+      } catch (e) { console.error("전재수 색인 기록 실패:", e.message); }
+    }
+    if ((j.items || []).length < 100) break;
+    await new Promise(r => setTimeout(r, 150));
+  }
+  if (!state.jeonInit) { state.jeonInit = true; console.log(`전재수 색인 초기 적재: ${added}건`); }
+  else if (added) console.log(`  전재수 색인 +${added}`);
+}
+// 해당 날짜들의 전재수 URL 집합
+function loadJeonUrls(dates) {
+  const s = new Set();
+  for (const d of dates) {
+    const f = `archive/jeon/${d}.jsonl`;
+    if (!existsSync(f)) continue;
+    for (const line of readFileSync(f, "utf8").split("\n")) { if (!line.trim()) continue; try { const r = JSON.parse(line); s.add(normUrl(r.url)); if (r.link) s.add(normUrl(r.link)); } catch {} }
+  }
+  return s;
+}
+// 기사가 전재수 언급인가: 제목·요약에 이름 OR 색인에 URL  (jeonSet은 loadJeonUrls(해당 날짜들))
+const isJeon = (it, jeonSet) => /전재수/.test(`${it.t || ""} ${it.ctx || ""}`) || (jeonSet && (jeonSet.has(normUrl(it.url)) || jeonSet.has(normUrl(it.nlink))));
+
 // ---- 주간 누적 리포트 (직전 한 주 일~토, 일요일 아침 브리핑에 동봉) ----
 async function sendWeeklyReport() {
   const dates = Array.from({ length: 7 }, (_, i) => kstDate(-1 - i)).reverse();  // 지난 일요일 ~ 어제(토)
   const items = loadDays(dates);
   if (!items.length) return;
   const wk = ["일","월","화","수","목","금","토"];
-  // 전재수 언급 = 제목 또는 본문 맥락(ctx)에 '전재수' (2026-08-24 사용자 요청: 일자별·총계 병기)
-  const mentions = arr => arr.filter(it => /전재수/.test(`${it.t || ""} ${it.ctx || ""}`)).length;
+  // 전재수 언급 = 제목·요약에 이름 OR 전재수 색인(archive/jeon)에 URL — 모집단은 그대로, 본문 깊숙한 언급까지 집계
+  const jeonSet = loadJeonUrls(dates);
+  const mentions = arr => arr.filter(it => isJeon(it, jeonSet)).length;
   const perDay = dates.map(dt => {
     const day = loadDays([dt]), wd = wk[new Date(dt + "T12:00:00Z").getUTCDay()];
     return `· ${dt.slice(5)}(${wd}) ${day.length.toLocaleString()}건 (전재수 언급 ${mentions(day).toLocaleString()}건)`;
@@ -944,6 +1000,7 @@ if (intervalSec > 0 && durationMin > 0) {
   while (Date.now() < until) {
     try { await runOnce(); } catch (e) { console.error("폴링 오류:", e.message); }
     try { await checkSurge(); } catch (e) { console.error("급증 감지 오류:", e.message); }
+    try { await runJeonIndex(); } catch (e) { console.error("전재수 색인 오류:", e.message); }
     // 신문 사설 확인 (55분 간격 — 다음날 지면 사설이 저녁부터 올라옴)
     if (Date.now() - lastEdCheck > 55 * 60 * 1000) {
       lastEdCheck = Date.now();
