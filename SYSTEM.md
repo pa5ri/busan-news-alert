@@ -19,11 +19,13 @@
 
 | 봇 | 표시명 | 시크릿 | 역할 |
 |---|---|---|---|
-| @busan_live_bot | `.` (투명문자) | TG_BOT_TOKEN | 실시간·분야방·특수방 전부, TOP 명령/버튼 |
-| @busan_brief_bot | 부산 뉴스 브리핑 | TG_BRIEF_TOKEN | 아침 브리핑·주간 리포트·브리핑 버튼 |
-| @busan_newsmon_bot | TV | TG_NIGHTLY_TOKEN | 밤 10시 TV 보고(엑셀) |
-| @busan_ordinance_bot | 부산시 입법예고 | TG_ORD_TOKEN | 입법예고 (로컬 PC에서 발송) |
-| @busan_bills_bot | 부산시의회 의안정보 | TG_BILL_TOKEN | 의안접수 (로컬 PC에서 발송) |
+| @busan_live_bot | 부산 통합 모니터링 봇 | TG_BOT_TOKEN | 실시간·분야방·특수방 전부, TOP 명령/버튼 |
+| @busan_brief_bot | 부산 통합 모니터링 봇 | TG_BRIEF_TOKEN | 아침 브리핑·주간 리포트·브리핑 버튼 |
+| @busan_newsmon_bot | 부산 통합 모니터링 봇 | TG_NIGHTLY_TOKEN | 밤 10시 TV 보고(엑셀) |
+| @busan_ordinance_bot | 부산 통합 모니터링 봇 | TG_ORD_TOKEN | 입법예고 (로컬 PC에서 발송) |
+| @busan_bills_bot | 부산 통합 모니터링 봇 | TG_BILL_TOKEN | 의안접수 (로컬 PC에서 발송) |
+
+표시명은 2026-08-23에 5개 모두 「부산 통합 모니터링 봇」으로 통일(투명문자 이름은 "없는 듯 불안정해 보인다"는 사용자 판단). 바꿀 땐 BotFather 대신 Bot API `setMyName`을 토큰별로 호출하면 된다(일회성 워크플로 패턴).
 
 `TG_TOPICS` 시크릿 (주제 → message_thread_id) 현재 값:
 
