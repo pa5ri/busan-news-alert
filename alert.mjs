@@ -533,7 +533,13 @@ async function runOnce() {
     const primary = council
       ? [council.topic, `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
       : special === "기고"
-        ? ["기고", `${SPECIAL_EMOJI["기고"]} <b>[기고·칼럼]</b> <b>${esc(title.replace(/^\[[^\]]*\]\s*/, "").trim() || title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
+        ? (() => {   // 말머리로 기고/칼럼 구분: [기고]·[특별기고] → 기고, 그 외([칼럼]·[시론]·[기자수첩]·[세상읽기]…) → 칼럼. 원래 말머리는 매체 옆에 표기
+            const head = (title.match(/\[([^\]]*)\]/) || [])[1] || "";
+            const kind = /기고/.test(head) ? "기고" : "칼럼";
+            const sub = head && !/^(기고|칼럼)$/.test(head.trim()) ? ` · ${esc(head.trim())}` : "";
+            const clean = title.replace(/^\[[^\]]*\]\s*/, "").trim() || title;
+            return ["기고", `${kind === "기고" ? "🖋" : "📝"} <b>[${kind}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)}${sub}</i>\n${link}\n\n…${esc(ctx)}…`];
+          })()
         : [cat, msg];
     if (!await sendCat(primary[0], primary[1])) {   // 실패분은 미표시로 남겨 다음 회차에 재시도
       console.error(`이번 회차 중단 — 잔여분은 다음 회차로 이월`);
