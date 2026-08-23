@@ -14,7 +14,9 @@ for (let attempt = 0; attempt < BACKOFF.length && !result; attempt++) {
     await p.setUserAgent(UA);
     await p.setExtraHTTPHeaders({ "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.5" });
     await p.goto("https://news.jtbc.co.kr/program/NG10000002", { waitUntil: attempt === 0 ? "networkidle2" : "domcontentloaded", timeout: 60000 });
-    await new Promise(r => setTimeout(r, 2500));
+    // 목록이 실제로 그려질 때까지 대기 — 해외 러너는 빈 껍데기만 받고 networkidle이 끝나는 경우가 있다(2026-08-23: 0건 '성공')
+    await p.waitForSelector('a[href*="/video/NB"]', { timeout: 30000 });
+    await new Promise(r => setTimeout(r, 1500));
     for (let i = 0; i < 8; i++) {
       const more = await p.evaluate(() => { const b = [...document.querySelectorAll("button, a")].find(e => /더\s?보기/.test(e.textContent || "")); if (!b) return false; b.click(); return true; });
       if (!more) break;
@@ -36,7 +38,8 @@ for (let attempt = 0; attempt < BACKOFF.length && !result; attempt++) {
 }
 await browser.close();
 if (!result) { console.error("최종 실패:", lastErr?.message); process.exit(1); }
-if (result.pageDate && result.pageDate !== WANT) { console.error(`페이지 최신 방송분이 ${result.pageDate} — 대상 ${WANT}과 불일치, 발송 안 함`); process.exit(2); }
+if (!result.items.length) { console.error("목록 0건 — 빈 메시지를 보내지 않고 종료"); process.exit(2); }
+if (result.pageDate !== WANT) { console.error(`페이지 최신 방송분이 '${result.pageDate}' — 대상 ${WANT}과 불일치, 발송 안 함`); process.exit(2); }
 
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const [chat, thread] = String(process.env.TG_CHAT_ID || "").split(",")[0].split(":");

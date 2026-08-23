@@ -152,6 +152,8 @@ try {
   // JTBC 뉴스룸 — 프로그램 전용 페이지(/program/NG10000002). 리포트는 /video/NB… 형태.
   try {
     const { items, pageDate } = await withPage("https://news.jtbc.co.kr/program/NG10000002", async p => {
+      // 목록이 실제로 그려질 때까지 대기 — 해외 러너는 빈 껍데기만 받고 networkidle이 끝나기도 한다(0건 '성공' 방지)
+      await p.waitForSelector('a[href*="/video/NB"]', { timeout: 30000 });
       // 목록은 첫 11건만 그려지고 「더보기」 버튼으로 펼쳐진다(스크롤로는 안 늘어남 — 2026-08-23 확인:
       // 그동안 매일 정확히 11건만 잡힌 원인). 버튼이 사라질 때까지 최대 8회 클릭(클릭은 네트워크 요청 없음).
       for (let i = 0; i < 8; i++) {
