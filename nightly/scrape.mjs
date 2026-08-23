@@ -82,10 +82,12 @@ async function kbsBusan() {
   const picked = (inNine.length ? inNine : seg);
   // 중복 제거(같은 리포트가 뉴스7·뉴스9에 재방송되는 경우 대비) 후 방송 순서대로
   const seen = new Set();
-  return picked
+  const out = picked
     .filter(it => it.title.length > 4 && !isMarker(it.title))
     .filter(it => { const k = it.title.replace(/\s+/g, ""); if (seen.has(k)) return false; seen.add(k); return true; })
     .reverse();
+  out.closed = iClose >= 0;          // 뉴스9 클로징 마커가 게시됐는가(= 방송 종료)
+  return out;
 }
 
 // ================= 브라우저 기반 소스들 =================
@@ -354,14 +356,20 @@ try {
   // ---- 맨 마지막: KBS부산 뉴스9 (방송 종료까지 대기) ----
   // KBS부산 뉴스9는 21:40쯤 시작해 22:10~22:20에 끝나고 리포트가 방송 중 순차 게시된다(2026-08-23 실측: 헤드라인 21:39 → 클로징 22:12).
   // 22:01에 긁으면 방송 도중이라 3~6건만 잡히고 클로징 마커도 없다 → 대상일이 오늘이면 22:20(KST)까지 기다렸다가 수집.
-  {
-    const nowK = new Date(Date.now() + 9 * 3600 * 1000);
-    if (D === todayKST) {
-      const waitMs = Date.UTC(nowK.getUTCFullYear(), nowK.getUTCMonth(), nowK.getUTCDate(), 22, 20) - nowK.getTime();
-      if (waitMs > 0 && waitMs < 40 * 60 * 1000) { console.log(`KBS부산 뉴스9: 방송 종료(22:20 KST)까지 ${Math.round(waitMs / 60000)}분 대기`); await new Promise(r => setTimeout(r, waitMs)); }
+  // 시각이 아니라 '클로징 마커가 게시될 때까지' 2분마다 확인(최대 22:40 KST) — 8/20처럼 클로징이 22:21에 올라온 날도 마지막 리포트까지 담는다.
+  // 완결성 > 즉시성 (사용자 결정 2026-08-23). 22:40이 넘어도 마커가 없으면 그때까지 게시된 것으로 보고한다.
+  let kbsB = null;
+  try {
+    for (let i = 0; i < 20; i++) {
+      kbsB = await kbsBusan();
+      const nowK = new Date(Date.now() + 9 * 3600 * 1000);
+      const kMin = nowK.getUTCHours() * 60 + nowK.getUTCMinutes();
+      if (D !== todayKST || kbsB.closed || kMin >= 22 * 60 + 40 || kMin < 21 * 60) break;
+      console.log(`KBS부산 뉴스9: 아직 방송 중(클로징 없음, ${kbsB.length}건) — 2분 뒤 재확인`);
+      await new Promise(r => setTimeout(r, 120000));
     }
-  }
-  try { push("부산방송", "KBS부산 뉴스9", await kbsBusan()); } catch (e) { push("부산방송","KBS부산 뉴스9",[],"API 실패: "+e.message); }
+    push("부산방송", "KBS부산 뉴스9", kbsB, kbsB.closed ? undefined : (kbsB.length ? "클로징 마커 없이 마감 — 방송 중 게시분까지만" : undefined));
+  } catch (e) { push("부산방송","KBS부산 뉴스9",[],"API 실패: "+e.message); }
 } finally {
   await browser.close();
 }
