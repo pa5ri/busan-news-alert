@@ -116,7 +116,6 @@ async function withPage(url, fn, wait = 1500) {
 try {
   // KBS 중앙 + 부산 (공식 API, 날짜 완전 지정)
   try { push("중앙방송", "KBS 뉴스9", await kbs9Central()); } catch (e) { push("중앙방송","KBS 뉴스9",[],"API 실패: "+e.message); }
-  try { push("부산방송", "KBS부산 뉴스9", await kbsBusan()); } catch (e) { push("부산방송","KBS부산 뉴스9",[],"API 실패: "+e.message); }
 
   // MBC 뉴스데스크 (최신 인덱스 + 날짜 검증)
   try {
@@ -230,6 +229,29 @@ try {
     }, D_DASH), 2500);
     // 부산MBC 목록은 프로그램 구분이 없다(뉴스데스크 리포트 + 아침·낮 기사 혼재).
     // 상세 페이지의 게시 시각으로 판별: 뉴스데스크 방송분 = 20:00~21:59, 아침 기사 = 07시대.
+    // 목록은 한 페이지 20건 — 바쁜 날(그날 20건↑)은 2페이지로 넘어간다. 1페이지 마지막 행이 아직 대상일이면 2페이지도 읽는다(2026-08-23).
+    try {
+      const lastDate = await withPage("https://busanmbc.co.kr/01_new/new01.asp", p => p.evaluate(() => {
+        const rows = [...document.querySelectorAll('a[href*="NewsViewFunc"]')].map(a => ((a.textContent || '').match(/20\d{2}-\d{2}-\d{2}/) || [])[0]).filter(Boolean);
+        return rows[rows.length - 1] || "";
+      }), 1000);
+      if (lastDate === D_DASH) {
+        const more = await withPage("https://busanmbc.co.kr/01_new/new01.asp?page=2&mt=A&subt=4&smat=A&sl=", p => p.evaluate((dDash) => {
+          const m = new Map();
+          document.querySelectorAll('a[href*="NewsViewFunc"]').forEach(a => {
+            const idx = ((a.getAttribute('href')||'').match(/NewsViewFunc\((\d+)/)||[])[1];
+            const text = (a.textContent||'').replace(/\s+/g,' ').trim();
+            if (!idx || !text.includes(dDash)) return;
+            const t = text.replace(/20\d{2}-\d{2}-\d{2}/g,'').trim();
+            if (t.length > 6 && !m.has(idx)) m.set(idx, { title: t.slice(0, 80), url: `https://busanmbc.co.kr/01_new/new01_view.asp?idx=${idx}` });
+          });
+          return [...m.values()];
+        }, D_DASH), 2000);
+        const have = new Set(items.map(x => x.url));
+        for (const it of more) if (!have.has(it.url)) items.push(it);
+        if (more.length) console.log(`  부산MBC: 2페이지에서 ${more.length}건 추가`);
+      }
+    } catch {}
     let deskItems = items;
     if (items.length) {
       const timed = await withPage("https://busanmbc.co.kr/01_new/new01.asp", p => p.evaluate(async (list) => {
@@ -322,12 +344,24 @@ try {
   };
   try {
     const items = await withPage(["https://www.kookje.co.kr/", "http://www.kookje.co.kr/"], p => p.evaluate(`(${paperPick.kookje.toString()})(${JSON.stringify([D, D_NEXT])})`));
-    push("지면", "국제신문", items.slice(0, 40));
+    push("지면", "국제신문", items.slice(0, 60));
   } catch (e) { push("지면","국제신문",[],"실패: "+e.message); }
   try {
     const items = await withPage(["https://www.busan.com/", "https://busan.com/"], p => p.evaluate(`(${paperPick.busanilbo.toString()})(${JSON.stringify([D_PREV, D])})`));
-    push("지면", "부산일보", items.slice(0, 40));
+    push("지면", "부산일보", items.slice(0, 60));
   } catch (e) { push("지면","부산일보",[],"실패: "+e.message); }
+
+  // ---- 맨 마지막: KBS부산 뉴스9 (방송 종료까지 대기) ----
+  // KBS부산 뉴스9는 21:40쯤 시작해 22:10~22:20에 끝나고 리포트가 방송 중 순차 게시된다(2026-08-23 실측: 헤드라인 21:39 → 클로징 22:12).
+  // 22:01에 긁으면 방송 도중이라 3~6건만 잡히고 클로징 마커도 없다 → 대상일이 오늘이면 22:20(KST)까지 기다렸다가 수집.
+  {
+    const nowK = new Date(Date.now() + 9 * 3600 * 1000);
+    if (D === todayKST) {
+      const waitMs = Date.UTC(nowK.getUTCFullYear(), nowK.getUTCMonth(), nowK.getUTCDate(), 22, 20) - nowK.getTime();
+      if (waitMs > 0 && waitMs < 40 * 60 * 1000) { console.log(`KBS부산 뉴스9: 방송 종료(22:20 KST)까지 ${Math.round(waitMs / 60000)}분 대기`); await new Promise(r => setTimeout(r, waitMs)); }
+    }
+  }
+  try { push("부산방송", "KBS부산 뉴스9", await kbsBusan()); } catch (e) { push("부산방송","KBS부산 뉴스9",[],"API 실패: "+e.message); }
 } finally {
   await browser.close();
 }
