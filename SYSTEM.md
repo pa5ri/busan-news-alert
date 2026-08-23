@@ -80,7 +80,8 @@
 | 55분 주기 | 사설 체크 |
 | 07:00 | 아침 브리핑(연속성: 계속/신규/재점화 + 🔎시정 추적 + 전재수 섹션 + led: 버튼). briefedFor 가드. 놓치면 `gh workflow run alert.yml -f brief_now=true` |
 | 일요일 07:00 | 주간 누적 리포트(지난 일~토) |
-| 22:01 | nightly 트리거(루프가 dispatch, 가드가 중복 방지) |
+| 21:40 | **JTBC 뉴스룸 목록 로컬 수집**(이 PC, 예약 작업 「부산JTBC수집」 → `nightly/jtbc-latest.json` 커밋·푸시) |
+| 22:01 | nightly 트리거(루프가 dispatch, 가드가 중복 방지). JTBC는 방송일이 맞는 로컬 파일 우선, 없으면 직접 접속 |
 | 평일 낮 | 의정 체크(로컬 PC) |
 
 ## 6. 운영 런북
@@ -116,7 +117,7 @@ printf '%s' '<값>' > $SCRATCHPAD/t.txt && gh secret set TG_TOPICS < $SCRATCHPAD
 - **CRLF**: CHANGELOG 삽입 시 `indexOf("## 2026-")` 방식 사용(줄바꿈 무관).
 - 부산일보 사설 code=**등록시각**(전날 17~18시), 국제신문 key=**지면일**. SBS 목록은 상대시각("N시간 전") 혼용.
 - TV조선 뉴스9 게시판은 평일만 게시 — 주말 0건은 정상(ℹ️).
-- **JTBC 뉴스룸 페이지는 스크롤이 아니라 「더보기」 버튼**으로 펼쳐진다(첫 11건만 렌더). 스크롤만 하면 매일 11건에서 멈춘다(2026-08-23 발견). 해외 러너에서 간헐 접속 타임아웃(7일 중 1회) — 실패한 날은 `gh workflow run jtbc-backfill.yml -f want=MM-DD`로 다음날 보충(페이지가 최신 방송분을 보여줄 때만 유효). JTBC RSS(fs.jtbc.co.kr)는 2024-10에 멈춘 죽은 피드, 네이버에도 뉴스룸 목록 없음.
+- **JTBC 뉴스룸 페이지는 스크롤이 아니라 「더보기」 버튼**으로 펼쳐진다(첫 11건만 렌더). 스크롤만 하면 매일 11건에서 멈춘다(2026-08-23 발견). ⚠ 기본 뷰포트(800×600)는 모바일 레이아웃이 돼 헤더의 다른 "더보기" 링크가 먼저 잡히고 **공지사항 페이지로 이동**한다 — 반드시 데스크톱 뷰포트 + `<button>` 정확 일치 + 주소 변경 시 중단. 해외 러너는 간헐 접속 타임아웃(7일 중 1회) → **1차 소스는 로컬 PC 수집 파일** `nightly/jtbc-latest.json`(예약 작업 「부산JTBC수집」 매일 21:40, `local/jtbc-local.mjs`, 로그 `local/jtbc-local.log`). 실패한 날은 로컬에서 `node local/jtbc-local.mjs` 후 `gh workflow run jtbc-backfill.yml -f want=MM-DD`로 보충. JTBC RSS(fs.jtbc.co.kr)는 2024-10에 멈춘 죽은 피드, 네이버에도 뉴스룸 목록 없음.
 - 봇 이름은 빈 값 불가, U+115F/U+FFA0 투명문자는 가능.
 - **로컬 예약 작업(의정 모니터링)은 전원 조건으로 조용히 죽는다** — 배터리 구동 시 실행 거부(0x800710E0)로 금요일 오후 4회분이 누락된 적 있음(2026-08-15 발견). AllowStartIfOnBatteries + StartWhenAvailable 켜서 해결. 새 예약 작업을 만들면 이 두 설정을 반드시 확인할 것.
 - **GitHub 크론은 "안 오거나, 몇 시간 늦게 온다"** — 지연 발화가 UTC 자정을 넘기면 날짜 기반 가드가 뚫린다. nightly 가드에 KST 21~23시 시간창 추가(2026-08-15).
