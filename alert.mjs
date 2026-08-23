@@ -527,7 +527,12 @@ async function runOnce() {
     }
 
     const msg = `${CAT_EMOJI[cat] || "📰"} <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`;
-    if (!await sendCat(cat, msg)) {           // 실패분은 미표시로 남겨 다음 회차에 재시도
+    // 부산시의회 기사는 분야방(정치 등)에 보내지 않고 시의회방에만 — 두 방 중복 제거(2026-08-23 사용자 요청).
+    // 아카이브의 분야 태그(cat)는 그대로라 브리핑·통계에는 영향 없음.
+    const primary = council
+      ? [council.topic, `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
+      : [cat, msg];
+    if (!await sendCat(primary[0], primary[1])) {   // 실패분은 미표시로 남겨 다음 회차에 재시도
       console.error(`이번 회차 중단 — 잔여분은 다음 회차로 이월`);
       break;
     }
@@ -564,11 +569,7 @@ async function runOnce() {
       await sendCat(chief.topic,
         `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
-    // 부산시의회 전용 방 (조직 + 개별 의원 활동)
-    if (council) {
-      await sendCat(council.topic,
-        `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
-    }
+    // (부산시의회 기사는 위에서 시의회방으로 '대신' 발송됨 — 분야방 중복 없음)
     archive(it, name, cat);
     if ((sent + recorded) % 10 === 0) saveState();   // 대량 처리 중 잡이 죽어도 중복 재전송을 최소화
   }
