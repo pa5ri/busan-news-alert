@@ -17,12 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: 의존성 설치
-        working-directory: nightly
-        run: |
-          npm ci
-          npx puppeteer browsers install chrome
-      - name: 보충 발송
+      - name: 보충 발송 (로컬 PC가 올린 nightly/jtbc-latest.json 사용 — 브라우저 불필요)
         working-directory: nightly
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_NIGHTLY_TOKEN }}

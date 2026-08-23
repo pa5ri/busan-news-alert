@@ -13,7 +13,7 @@
 //  MBC 뉴스데스크        → 다시보기 인덱스=최신 방송분. 페이지 날짜 검증 후 수집 [최신+검증]
 //  JTBC 뉴스룸          → /program/NG10000002 전용판(video/NB), 페이지 날짜 검증 [프로그램+검증]
 import puppeteer from "puppeteer";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // 부산MBC 등 인증서 문제 사이트 본문 조회용
 
@@ -101,6 +101,7 @@ async function withPage(url, fn, wait = 1500) {
     const p = await browser.newPage();
     try {
       await p.setUserAgent(UA);
+      await p.setViewport({ width: 1366, height: 900 });   // 기본 800×600은 모바일 레이아웃이 되는 사이트가 있다(JTBC)
       await p.setExtraHTTPHeaders({ "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.5" });
       await p.goto(urls[attempt % urls.length], { waitUntil: attempt === 0 ? "networkidle2" : "domcontentloaded", timeout: 60000 });
       await new Promise(r => setTimeout(r, attempt === 0 ? wait : wait + 2000));
@@ -151,18 +152,29 @@ try {
 
   // JTBC 뉴스룸 — 프로그램 전용 페이지(/program/NG10000002). 리포트는 /video/NB… 형태.
   try {
-    const { items, pageDate } = await withPage("https://news.jtbc.co.kr/program/NG10000002", async p => {
-      // 목록이 실제로 그려질 때까지 대기 — 해외 러너는 빈 껍데기만 받고 networkidle이 끝나기도 한다(0건 '성공' 방지)
+    // ① 로컬 PC(한국 IP)가 21:40에 올려둔 파일을 우선 사용 — 해외 러너는 프로그램 페이지가 「공지사항」으로
+    //    리다이렉트돼 목록을 못 받는다(2026-08-23 확인). 방송일이 오늘과 일치할 때만.
+    let local = null;
+    try { const j = JSON.parse(readFileSync("jtbc-latest.json", "utf8")); if (j.date === `${D.slice(0,4)}-${D.slice(4,6)}-${D.slice(6,8)}` && j.items?.length) local = j; } catch {}
+    const { items, pageDate } = local ? { items: local.items, pageDate: `${D.slice(4,6)}-${D.slice(6,8)}` } : await withPage("https://news.jtbc.co.kr/program/NG10000002", async p => {
+      // 목록이 실제로 그려질 때까지 대기 — 빈 껍데기만 받고 networkidle이 끝나기도 한다(0건 '성공' 방지)
       await p.waitForSelector('a[href*="/video/NB"]', { timeout: 30000 });
       // 목록은 첫 11건만 그려지고 「더보기」 버튼으로 펼쳐진다(스크롤로는 안 늘어남 — 2026-08-23 확인:
-      // 그동안 매일 정확히 11건만 잡힌 원인). 버튼이 사라질 때까지 최대 8회 클릭(클릭은 네트워크 요청 없음).
+      // 그동안 매일 정확히 11건만 잡힌 원인). ⚠ 좁은 화면(기본 800×600)에선 헤더의 다른 "더보기" 링크가
+      // 먼저 잡혀 공지사항 페이지로 이동해 버린다 → <button> 요소 중 텍스트가 정확히 "더보기"인 것만,
+      // 목록 쪽(마지막 것)을 누르고, 주소가 바뀌면 즉시 중단.
+      const pageUrl = p.url();
       for (let i = 0; i < 8; i++) {
-        const more = await p.evaluate(() => {
-          const b = [...document.querySelectorAll("button, a")].find(e => /더\s?보기/.test(e.textContent || ""));
-          if (!b) return false; b.click(); return true;
+        const before = await p.evaluate(() => document.querySelectorAll('a[href*="/video/NB"]').length);
+        const clicked = await p.evaluate(() => {
+          const bs = [...document.querySelectorAll("button")].filter(e => /^더\s?보기$/.test((e.textContent || "").trim()));
+          if (!bs.length) return false; bs[bs.length - 1].click(); return true;
         });
-        if (!more) break;
+        if (!clicked) break;
         await new Promise(r => setTimeout(r, 1500));
+        if (p.url() !== pageUrl) { console.log("  JTBC: 더보기 클릭이 페이지 이동을 일으켜 중단 → " + p.url()); await p.goBack().catch(() => {}); break; }
+        const after = await p.evaluate(() => document.querySelectorAll('a[href*="/video/NB"]').length);
+        if (after <= before) break;
       }
       return p.evaluate(() => {
         const m = new Map();

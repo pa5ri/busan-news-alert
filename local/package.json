@@ -1,0 +1,9 @@
+{
+  "name": "busan-local-jobs",
+  "private": true,
+  "type": "module",
+  "description": "로컬 PC(한국 IP)에서만 도는 보조 수집 — 해외 러너 차단 매체용",
+  "dependencies": {
+    "puppeteer-core": "^23.11.1"
+  }
+}
