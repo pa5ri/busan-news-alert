@@ -30,9 +30,12 @@ for (let attempt = 0; attempt < BACKOFF.length && !result; attempt++) {
         if (id && t.length > 8 && !m.has(id)) m.set(id, { title: t, url: `https://news.jtbc.co.kr/article/${id}` });
       });
       const dm = document.body.innerText.match(/(\d{1,2})월\s*(\d{1,2})일/);
-      return { items: [...m.values()], pageDate: dm ? `${dm[1].padStart(2, "0")}-${dm[2].padStart(2, "0")}` : "" };
+      const as = [...document.querySelectorAll('a[href*="/video/NB"]')];
+      const diag = { title: document.title, nbAnchors: as.length, firstAnchor: as[0] ? as[0].outerHTML.slice(0, 300) : "", textHead: document.body.innerText.replace(/\s+/g, " ").slice(0, 300) };
+      return { items: [...m.values()], pageDate: dm ? `${dm[1].padStart(2, "0")}-${dm[2].padStart(2, "0")}` : "", diag };
     });
     console.log(`시도 ${attempt + 1} 성공: ${result.items.length}건, 페이지 날짜 ${result.pageDate}`);
+    if (!result.items.length) { console.log("진단:", JSON.stringify(result.diag)); result = null; throw new Error("목록 0건 — 재시도"); }
   } catch (e) { lastErr = e; console.log(`시도 ${attempt + 1} 실패: ${e.message.slice(0, 80)}`); }
   finally { await p.close(); }
 }
