@@ -539,15 +539,9 @@ async function runOnce() {
     if (scoopPass) {
       const tag = isExclusive(title) ? "단독" : "속보";
       const clean = title.replace(/\[(단독|속보)\]\s*/g, "").trim();
-      // 해석 블록: 부산 관련성 · 이슈 대장 연결(연속 사안인지, 새 사안인지) · 단독이면 확산 추적 안내
-      const bm = title.match(BUSAN_ORG) || title.match(BUSAN_PLACE);
-      const why = [
-        bm ? `📍 부산 사안 — 제목에 '${esc(bm[0])}'` : `📍 제목엔 부산 없음 — 본문에 부산 기관·지명이 주체로 등장해 선별`,
-        ledgerNote(dupToks(toks)),
-        tag === "단독" ? `🔎 후속 확산 자동 추적 중 — 6시간 안에 주요 매체 3곳↑이 받아쓰면 알려드립니다` : null,
-      ].filter(Boolean).join("\n");
+      // 건별 해석 블록은 붙이지 않는다(2026-08-22 사용자 결정: 해석은 급증·확산 알림에만). 단독은 확산 추적만 조용히 등록.
       await sendCat("단독·속보",
-        `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…\n\n${why}`);
+        `⚡ <b>[${tag}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)} · ${CAT_EMOJI[cat] || ""}${esc(cat)}</i>\n${link}\n\n…${esc(ctx)}…`);
       if (tag === "단독") {
         state.scoopTrack = state.scoopTrack || [];
         state.scoopTrack.push({ ts: Date.now(), title: clean.slice(0, 70), name, link, toks: dupToks(toks), reported: false });
