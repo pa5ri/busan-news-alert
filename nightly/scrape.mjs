@@ -152,9 +152,15 @@ try {
   // JTBC 뉴스룸 — 프로그램 전용 페이지(/program/NG10000002). 리포트는 /video/NB… 형태.
   try {
     const { items, pageDate } = await withPage("https://news.jtbc.co.kr/program/NG10000002", async p => {
-      for (let i = 0; i < 4; i++) {                       // 그날 방송분 전체가 나오도록 스크롤
-        await p.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-        await new Promise(r => setTimeout(r, 1200));
+      // 목록은 첫 11건만 그려지고 「더보기」 버튼으로 펼쳐진다(스크롤로는 안 늘어남 — 2026-08-23 확인:
+      // 그동안 매일 정확히 11건만 잡힌 원인). 버튼이 사라질 때까지 최대 8회 클릭(클릭은 네트워크 요청 없음).
+      for (let i = 0; i < 8; i++) {
+        const more = await p.evaluate(() => {
+          const b = [...document.querySelectorAll("button, a")].find(e => /더\s?보기/.test(e.textContent || ""));
+          if (!b) return false; b.click(); return true;
+        });
+        if (!more) break;
+        await new Promise(r => setTimeout(r, 1500));
       }
       return p.evaluate(() => {
         const m = new Map();

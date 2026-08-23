@@ -1,0 +1,31 @@
+name: JTBC 뉴스룸 보충 (일회성)
+
+on:
+  workflow_dispatch:
+    inputs:
+      want:
+        description: "대상 방송일 MM-DD"
+        required: true
+        default: "08-22"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 의존성 설치
+        working-directory: nightly
+        run: |
+          npm ci
+          npx puppeteer browsers install chrome
+      - name: 보충 발송
+        working-directory: nightly
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_NIGHTLY_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_NIGHTLY_CHAT || secrets.TG_CHAT_ID }}
+          WANT_DATE: ${{ inputs.want }}
+        run: node jtbc-backfill.mjs
