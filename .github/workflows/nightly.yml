@@ -18,7 +18,7 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
+  actions: write            # 실패 매체 자동 보충(nightly-retry.yml) 디스패치용
 
 jobs:
   run:
@@ -65,3 +65,21 @@ jobs:
           NAVER_ID: ${{ secrets.NAVER_ID }}
           NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
         run: node run.mjs
+      - name: 실패 매체가 있으면 30분 뒤 자동 보충(클라우드 재시도) 예약
+        if: steps.guard.outputs.already == '0' || steps.guard.outcome == 'skipped'
+        working-directory: nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          failed=$(node -e '
+            const d = JSON.parse(require("fs").readFileSync("data/broadcasters.json","utf8"));
+            const f = d.sources.filter(s => s.items.length === 0 && s.note && !/\(정상\)$/.test(s.note)).map(s => s.source);
+            process.stdout.write(f.join(","));
+          ')
+          date=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("data/broadcasters.json","utf8")).date.replace(/-/g,""))')
+          if [ -n "$failed" ]; then
+            echo "실패 매체: $failed → nightly-retry 디스패치"
+            gh workflow run nightly-retry.yml -R ${{ github.repository }} -f date="$date" -f sources="$failed"
+          else
+            echo "실패 매체 없음"
+          fi

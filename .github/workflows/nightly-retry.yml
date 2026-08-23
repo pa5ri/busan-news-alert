@@ -1,0 +1,49 @@
+name: 밤10시 보고 실패 매체 자동 보충
+
+# nightly.yml이 실패 매체를 감지하면 디스패치한다. 30분 뒤 재수집 → 잡히면 보충 메시지, 아직 실패면 30분 뒤 한 번 더.
+# 컴퓨터 없이 클라우드만으로 간헐 차단(타임아웃)을 메우기 위한 장치 (2026-08-23).
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "대상 날짜 YYYYMMDD"
+        required: true
+      sources:
+        description: "실패 매체(쉼표 구분)"
+        required: true
+
+concurrency:
+  group: nightly-retry
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 의존성 설치
+        working-directory: nightly
+        run: |
+          npm ci
+          npx puppeteer browsers install chrome
+      - name: 30분 대기 후 재수집·보충 (최대 2회)
+        working-directory: nightly
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_NIGHTLY_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_NIGHTLY_CHAT || secrets.TG_CHAT_ID }}
+          NAVER_ID: ${{ secrets.NAVER_ID }}
+          NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
+        run: |
+          for i in 1 2; do
+            echo "== ${i}차: 30분 대기 =="; sleep 1800
+            node scrape.mjs "${{ inputs.date }}" || true
+            if node retry-send.mjs "${{ inputs.date }}" "${{ inputs.sources }}"; then echo "보충 완료"; exit 0; fi
+          done
+          echo "2회 재시도 후에도 실패 — 다음날 로컬 보충(jtbc-backfill 등) 대상"
