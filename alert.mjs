@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
 // 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
@@ -540,7 +540,11 @@ async function runOnce() {
             const clean = title.replace(/^\[[^\]]*\]\s*/, "").trim() || title;
             return ["기고", `${kind === "기고" ? "🖋" : "📝"} <b>[${kind}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)}${sub}</i>\n${link}\n\n…${esc(ctx)}…`];
           })()
-        : [cat, msg];
+        : (() => {   // 사회 분야는 사건·사고/날씨·재난이면 그 방으로만(사회방 중복 없음). 아카이브 cat은 '사회' 유지
+            const sub = socialSub(cat, rec);
+            if (!sub) return [cat, msg];
+            return [sub, `${sub === "사건사고" ? "🚨" : "🌦"} <b>[${esc(name)}]</b> ${esc(title)}\n${link}\n\n…${esc(ctx)}…`];
+          })();
     if (!await sendCat(primary[0], primary[1])) {   // 실패분은 미표시로 남겨 다음 회차에 재시도
       console.error(`이번 회차 중단 — 잔여분은 다음 회차로 이월`);
       break;

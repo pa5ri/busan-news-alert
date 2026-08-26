@@ -148,6 +148,20 @@ export function partyChief(item) {
 // 제목 매칭만 사용(본문 매칭은 시정 일반 기사가 통째로 딸려옴 — 본문전용 374건 대부분 무관).
 const RE_COUNCIL = /부산시의회|부산광역시의회|부산광역시\s?시의회|부산\s시의회|부산시의원|부산\s시의원/;
 /** 시의회 방 판별. 해당 없으면 null. → { topic, emoji, label } (partyChief와 동일 형태) */
+// ── 사회 분야 세분화: 사건·사고 / 날씨·재난 (2026-08-26) ──
+// 사회방이 하루 285건(전체의 40%)으로 과밀 — 내부의 두 덩어리(사건사고·법원 24%, 날씨·재난 20%)를
+// 전용 방으로 분리한다. 사회 분야로 분류된 기사에만 적용하고, 아카이브 cat은 '사회' 그대로(모집단 불변).
+const RE_INCIDENT = /사고|화재|사망|숨져|숨진|부상|구조|추락|매몰|침수|익사|실종|충돌|전복|붕괴|범죄|사기|마약|음주운전|폭행|살해|살인|절도|성폭|스토킹|보이스피싱|검찰|경찰|법원|재판|구속|기소|송치|입건|영장|징역|선고|무혐의|수사|고발|고소/;
+const RE_DISASTER = /날씨|기온|폭염|열대야|호우|태풍|장마|폭우|한파|지진|미세먼지|가뭄|특보/;
+/** 사회 기사 세부 방 판별. 사회가 아니거나 해당 없으면 null. → "사건사고" | "날씨재난" */
+export function socialSub(cat, item) {
+  if (cat !== "사회") return null;
+  const t = String(item.t || item.title || "");
+  if (RE_INCIDENT.test(t)) return "사건사고";   // 사건이 우선 — "호우 속 추락 사고"는 사건사고로
+  if (RE_DISASTER.test(t)) return "날씨재난";
+  return null;
+}
+
 export function councilNews(item) {
   const t = String(item.t || item.title || "");
   if (RE_COUNCIL.test(t)) return { topic: "시의회", emoji: "🏛", label: "부산시의회" };
