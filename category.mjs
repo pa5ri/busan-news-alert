@@ -169,6 +169,10 @@ export function socialSub(cat, item) {
   const t = String(item.t || item.title || "");
   if (RE_INCIDENT.test(t)) return "사건사고";   // 사건이 우선 — "호우 속 추락 사고"는 사건사고로
   if (RE_DISASTER.test(t)) return "날씨재난";
+  // '비'는 한 글자라 단독으로 잡으면 비상·비판·준비가 걸린다 → 앞뒤에 한글이 없는 홀로 쓰인 '비'
+  // + 날씨 맥락어(전국·내일·㎜·예보 등)가 함께 있을 때만 (2026-08-30: "월요일까지 전국 강한 비" 누락 건)
+  if (/(?<![가-힣])비(?![가-힣])/.test(t)
+      && /(전국|곳곳|내일|모레|주말|휴일|아침|오전|오후|밤|새벽|낮|시간당|㎜|mm|예보|기상|우산|맑|흐리|구름|무더|더위|기온)/.test(t)) return "날씨재난";
   return null;
 }
 
