@@ -530,9 +530,23 @@ async function runOnce() {
     // 부산시의회 기사는 분야방(정치 등)에 보내지 않고 시의회방에만 — 두 방 중복 제거(2026-08-23 사용자 요청).
     // 아카이브의 분야 태그(cat)는 그대로라 브리핑·통계에는 영향 없음.
     // 기고·칼럼도 분야방 대신 기고방에만(2026-08-24 사용자 요청, 중복 제거). 말머리 괄호는 떼되 제목 뒤 괄호([○○의 시론])는 그대로.
+    // 시당위원장 기사는 시당 방에만(2026-08-30 사용자 결정 — 분야방 병행 폐지).
+    // 이미 시당 방에 간 사안(URL·제목 계열·토큰 재탕)이면 분야방에도 안 보내고 기록만.
+    if (chief && !council && special !== "기고") {
+      if (sg.grp.some(g => chiefSeen.has(g.k)) || chiefTitles.has(sg.nt) || chiefDup(chief.topic, toks)) {
+        for (const g of sg.grp) seen.add(g.k);
+        seenTitles.add(sg.nt);
+        recentSent.push({ ts: Date.now(), title, name, link, toks });
+        archive(it, name, cat);
+        dups++;
+        continue;
+      }
+    }
     const primary = council
       ? [council.topic, `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
-      : special === "기고"
+      : chief && special !== "기고"
+        ? [chief.topic, `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
+        : special === "기고"
         ? (() => {   // 말머리로 기고/칼럼 구분: [기고]·[특별기고] → 기고, 그 외([칼럼]·[시론]·[기자수첩]·[세상읽기]…) → 칼럼. 원래 말머리는 매체 옆에 표기
             const head = (title.match(/\[([^\]]*)\]/) || [])[1] || "";
             const kind = /기고/.test(head) ? "기고" : "칼럼";
@@ -577,13 +591,11 @@ async function runOnce() {
       await sendCat(special,
         `${SPECIAL_EMOJI[special]} <b>[${special}]</b> <b>${esc(clean2)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
-    // 여야 부산시당위원장 전용 방 (박홍배·이성권) — 분야 방과 같은 형식(맥락 단락 포함)
-    if (chief && !sg.grp.some(g => chiefSeen.has(g.k)) && !chiefTitles.has(sg.nt) && !chiefDup(chief.topic, toks)) {
+    // (시당위원장 기사는 위에서 시당 방으로 '대신' 발송됨 — 분야방 병행 없음. 인물 패스 중복 방지용 마킹만)
+    if (chief && primary[0] === chief.topic) {
       for (const g of sg.grp) chiefSeen.add(g.k);   // 같은 제목 계열 전체 — 인물 패스가 다른 매체 버전을 다시 집지 않게
       chiefTitles.add(sg.nt);
       chiefRecent.push({ ts: Date.now(), room: chief.topic, toks });
-      await sendCat(chief.topic,
-        `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`);
     }
     // (부산시의회 기사는 위에서 시의회방으로 '대신' 발송됨 — 분야방 중복 없음)
     archive(it, name, cat);
