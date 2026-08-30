@@ -179,6 +179,11 @@ export function socialSub(cat, item) {
 export function councilNews(item) {
   const t = String(item.t || item.title || "");
   if (RE_COUNCIL.test(t)) return { topic: "시의회", emoji: "🏛", label: "부산시의회" };
+  // 조례 기사는 의정 사안 — 부산 관련이면 시의회방으로(2026-08-31, 전용 방 대신 흡수: 하루 0.5건이라 방 신설 실익 없음).
+  // 타 지역 조례(제목에 타 광역지명, 부산 없음)는 제외. 라벨은 [조례 동향]으로 구분.
+  if (/조례/.test(t) && !(OTHER_REGION.test(t) && !/부산/.test(t))
+      && (BUSAN_PLACE.test(t) || BUSAN_ORG.test(t) || isBusanRelevant(item)))
+    return { topic: "시의회", emoji: "🏛", label: "조례 동향" };
   return null;
 }
 
