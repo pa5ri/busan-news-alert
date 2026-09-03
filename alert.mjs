@@ -532,7 +532,7 @@ async function runOnce() {
     // 기고·칼럼도 분야방 대신 기고방에만(2026-08-24 사용자 요청, 중복 제거). 말머리 괄호는 떼되 제목 뒤 괄호([○○의 시론])는 그대로.
     // 시당위원장 기사는 시당 방에만(2026-08-30 사용자 결정 — 분야방 병행 폐지).
     // 이미 시당 방에 간 사안(URL·제목 계열·토큰 재탕)이면 분야방에도 안 보내고 기록만.
-    if (chief && !council && special !== "기고" && !isAgenda(title)) {
+    if (chief && !council && special !== "기고") {
       if (sg.grp.some(g => chiefSeen.has(g.k)) || chiefTitles.has(sg.nt) || chiefDup(chief.topic, toks)) {
         for (const g of sg.grp) seen.add(g.k);
         seenTitles.add(sg.nt);
@@ -542,7 +542,7 @@ async function runOnce() {
         continue;
       }
     }
-    // 라우팅 우선순위(2026-09-01): 기고·칼럼(형식) → 중요시책 → 시의회 → 시당위원장 → 사회 세분화 → 분야방.
+    // 라우팅 우선순위(2026-09-01 확정): 기고·칼럼(형식) → 시의회 → 시당위원장 → 중요시책 → 사회 세분화 → 분야방.
     // 전용 방에 가는 기사는 분야방에 보내지 않는다(중복 제거). 아카이브 분야 태그는 그대로.
     const primary = special === "기고"
       ? (() => {   // 말머리로 기고/칼럼 구분: [기고]·[특별기고] → 기고, 그 외([칼럼]·[시론]·[기자수첩]·[세상읽기]…) → 칼럼. 원래 말머리는 매체 옆에 표기
@@ -552,13 +552,13 @@ async function runOnce() {
           const clean = title.replace(/^\[[^\]]*\]\s*/, "").trim() || title;
           return ["기고", `${kind === "기고" ? "🖋" : "📝"} <b>[${kind}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)}${sub}</i>\n${link}\n\n…${esc(ctx)}…`];
         })()
-      : isAgenda(title)
-        // 중요시책(돔구장·글로벌허브도시·산은/공공기관 이전·북극항로·가덕신공항·북항 재개발/환승센터·해수부 이전·민생100일)은 이 방에만
-        ? ["중요시책", `🎯 <b>[중요시책]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
-        : council
-          ? [council.topic, `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
-          : chief
-            ? [chief.topic, `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
+      : council
+        ? [council.topic, `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
+        : chief
+          ? [chief.topic, `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
+          : isAgenda(title)
+            // 중요시책(돔구장·글로벌허브도시·산은/공공기관 이전·북극항로·가덕신공항·북항 재개발/환승센터·해수부 이전·민생100일)은 이 방에만
+            ? ["중요시책", `🎯 <b>[중요시책]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
             : (() => {   // 사회·생활/문화·기타는 사건·사고/날씨·재난이면 그 방으로만
                 const sub = socialSub(cat, rec);
                 if (!sub) return [cat, msg];
