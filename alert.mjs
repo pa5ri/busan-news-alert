@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
 // 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
@@ -129,6 +129,33 @@ function storyDup(toks, list, thr = DUP_OVERLAP) {
   }
   return false;
 }
+// 여론조사 방(중앙·부산) 전용 중복 방지 — 전용 검색 패스와 본 패스가 같은 기사를 각각 집을 수 있다
+const pollSeen = new Set(state.pollSeen || []);
+const pollTitles = new Set(state.pollTitles || []);
+let pollRecent = (state.pollRecent || []).filter(e => Date.now() - e.ts < 24 * 3600e3);
+let firstRunPoll = pollSeen.size === 0;
+let pollLast = 0;
+const LOCAL_PRESS = new Set(["부산일보", "국제신문", "KNN", "부산MBC"]);
+// 같은 조사 발표를 매체마다 받아쓰므로 기관·일자별 상한: 중앙 3건(기관 미상 4건), 부산은 '타 시도지사 제목+본문에 전재수 순위'만 2건.
+// 부산 지역지(PK 수치 해설)와 제목이 부산인 조사는 상한 없음.
+function pollGate(poll, keys, nt, toks, name) {
+  if (keys.some(k => pollSeen.has(k)) || pollTitles.has(nt)) return false;
+  const room = pollRecent.filter(e => e.room === poll.topic);
+  if (storyDup(toks, room)) return false;
+  if (LOCAL_PRESS.has(name)) return true;
+  const today = kstDate(0), same = room.filter(e => e.day === today && e.agency === poll.agency && !!e.indirect === !!poll.indirect).length;
+  // 같은 대표 수치(예: 33.8%)는 같은 발표 — 중앙은 수치당 2건까지(제목이 잘려 기관명이 안 보이는 경우 대비)
+  const sameNum = poll.num ? room.filter(e => e.day === today && e.num === poll.num).length : 0;
+  if (poll.topic === "중앙여론조사") return sameNum < 2 && same < (poll.agency === "기타" ? 4 : 3);
+  return poll.indirect ? same < 2 : true;
+}
+function pollMark(poll, keys, nt, toks) {
+  for (const k of keys) pollSeen.add(k);
+  pollTitles.add(nt);
+  pollRecent.push({ ts: Date.now(), room: poll.topic, toks, agency: poll.agency, num: poll.num || "", indirect: !!poll.indirect, day: kstDate(0) });
+}
+const pollMsg = (poll, title, name, link, ctx) =>
+  `${poll.emoji} <b>[${poll.label}${poll.agency !== "기타" ? " · " + poll.agency : ""}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`;
 const chiefDup = (room, toks) => storyDup(toks, chiefRecent.filter(e => e.room === room));
 // 날씨 안내(온도·예보)는 하루 1건만 — 재해·사고성 제목은 제외
 const isWeatherInfo = t => /날씨|(아침|낮|오늘|내일|주말)\s?(최저|최고)?\s?기온/.test(t)
@@ -420,6 +447,9 @@ function saveState() {
     chiefTitles: [...chiefTitles].slice(-2000),
     sentStories: sentStories.slice(-800),
     chiefRecent: chiefRecent.slice(-300),
+    pollSeen: [...pollSeen].slice(-2000),
+    pollTitles: [...pollTitles].slice(-2000),
+    pollRecent: pollRecent.slice(-300),
     wxDate: state.wxDate || "",
     jeonSeen: [...jeonSeen].slice(-4000),
     jeonInit: !!state.jeonInit,
@@ -512,11 +542,12 @@ async function runOnce() {
     const special = specialKind(rec);          // 인터뷰(시장)·르포·기고 — 전용 방 추가 발송
     const chief = partyChief(rec);             // 여야 시당위원장(박홍배·이성권) — 전용 방 추가 발송
     const council = councilNews(rec);          // 부산시의회·시의원 — 전용 방 추가 발송
+    const poll = special === "기고" ? null : pollKind(rec);   // 여론조사(중앙·부산) — 전용 방으로 '대신' 발송
     const toks = tokensOf(title);
 
     // 매체 필터: 비메이저는 전송 없이 기록만 (아카이브·급증 감지·이슈 대장에는 전량 반영)
     // 단독·속보와 별도 관리 유형은 매체 불문 통과 (군소 매체 비중이 높은 유형)
-    if (!MAJOR.has(name) && !scoopPass && !special && !chief && !council) {
+    if (!MAJOR.has(name) && !scoopPass && !special && !chief && !council && !(poll && poll.topic === "부산여론조사")) {
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks });
@@ -528,9 +559,17 @@ async function runOnce() {
     // 사안 중복 억제: 12시간 내 이미 보낸 사안의 재탕(헤드라인만 다른 타 매체 버전)은 기록만.
     // 날씨 안내는 하루 1건만(state.wxDate), 의례성(포토 캡션·운세·일정·부고류)은 상시 기록만.
     // 단독·속보는 모든 억제에서 예외.
+    if (poll && !pollGate(poll, sg.grp.map(g => g.k), sg.nt, toks, name)) {   // 이미 간 조사·상한 초과 → 기록만
+      for (const g of sg.grp) seen.add(g.k);
+      seenTitles.add(sg.nt);
+      recentSent.push({ ts: Date.now(), title, name, link, toks });
+      archive(it, name, cat);
+      dups++;
+      continue;
+    }
     const wxCapped = isWeatherInfo(title) && state.wxDate === kstDate(0);
     // 단독·속보도 '거의 같은 제목'(0.8↑)의 재탕은 막는다 — 2026-08-21 실측: 속보 21건 중 8건이 동일 속보의 매체별 재전송
-    const dupHit = storyDup(toks, sentStories, scoopPass ? 0.8 : DUP_OVERLAP);
+    const dupHit = !poll && storyDup(toks, sentStories, scoopPass ? 0.8 : DUP_OVERLAP);   // 여론조사는 위 pollGate가 판정
     if (dupHit || (!scoopPass && (wxCapped || isCeremonial(title)))) {
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
@@ -546,7 +585,7 @@ async function runOnce() {
     // 기고·칼럼도 분야방 대신 기고방에만(2026-08-24 사용자 요청, 중복 제거). 말머리 괄호는 떼되 제목 뒤 괄호([○○의 시론])는 그대로.
     // 시당위원장 기사는 시당 방에만(2026-08-30 사용자 결정 — 분야방 병행 폐지).
     // 이미 시당 방에 간 사안(URL·제목 계열·토큰 재탕)이면 분야방에도 안 보내고 기록만.
-    if (chief && !council && special !== "기고") {
+    if (chief && !council && !poll && special !== "기고") {
       if (sg.grp.some(g => chiefSeen.has(g.k)) || chiefTitles.has(sg.nt) || chiefDup(chief.topic, toks)) {
         for (const g of sg.grp) seen.add(g.k);
         seenTitles.add(sg.nt);
@@ -556,7 +595,7 @@ async function runOnce() {
         continue;
       }
     }
-    // 라우팅 우선순위(2026-09-01 확정): 기고·칼럼(형식) → 시의회 → 시당위원장 → 중요시책 → 사회 세분화 → 분야방.
+    // 라우팅 우선순위(2026-09-01 확정, 09-19 여론조사 추가): 기고·칼럼(형식) → 여론조사(형식) → 시의회 → 시당위원장 → 중요시책 → 사회 세분화 → 분야방.
     // 전용 방에 가는 기사는 분야방에 보내지 않는다(중복 제거). 아카이브 분야 태그는 그대로.
     const primary = special === "기고"
       ? (() => {   // 말머리로 기고/칼럼 구분: [기고]·[특별기고] → 기고, 그 외([칼럼]·[시론]·[기자수첩]·[세상읽기]…) → 칼럼. 원래 말머리는 매체 옆에 표기
@@ -566,6 +605,8 @@ async function runOnce() {
           const clean = title.replace(/^\[[^\]]*\]\s*/, "").trim() || title;
           return ["기고", `${kind === "기고" ? "🖋" : "📝"} <b>[${kind}]</b> <b>${esc(clean)}</b>\n<i>${esc(name)}${sub}</i>\n${link}\n\n…${esc(ctx)}…`];
         })()
+      : poll
+        ? [poll.topic, pollMsg(poll, title, name, link, ctx)]
       : council
         ? [council.topic, `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
         : chief
@@ -588,6 +629,7 @@ async function runOnce() {
     sent++;
     recentSent.push({ ts: Date.now(), title, name, link, toks });   // 급증 감지용
     sentStories.push({ ts: Date.now(), toks, name, t: title.slice(0, 60) });   // 사안 중복 억제(12h) + 단독 확산 추적
+    if (poll) pollMark(poll, sg.grp.map(g => g.k), sg.nt, toks);
     if (isWeatherInfo(title)) state.wxDate = kstDate(0);            // 오늘의 날씨 슬롯 소진
     // 단독·속보 중 '부산 사안'만 별도 토픽에도 (중요 기사 전용 방)
     if (scoopPass) {
@@ -623,6 +665,7 @@ async function runOnce() {
 
   firstRun = false;
   await runChiefPass();
+  await runPollPass();
   saveState();
 }
 
@@ -681,6 +724,51 @@ async function runChiefPass() {
     if (n) console.log(`  인물 검색 ${q}: ${n}건 발송`);
   }
   firstRunChief = false;
+}
+
+// ---- 3차 패스: 여론조사 전용 검색 (10분 주기) ----
+// 본 패스는 query=부산이라 본문에 부산이 없는 정례 조사 기사(NBS 등)와 제목에 부산이 없는 부산 조사를 놓친다.
+// 질의 결과는 pollKind(제목 기준)로 거른다 — 조사 수치를 인용만 한 해설·공방 기사가 절반 이상이라서.
+// 중앙 조사는 메이저 매체만, 부산 조사는 매체 불문. 결과는 여론조사 방에만(분야방·아카이브에는 넣지 않음).
+const POLL_QUERIES = [
+  { q: "대통령 지지율", want: "중앙여론조사" }, { q: "정당 지지도 여론조사", want: "중앙여론조사" }, { q: "전국지표조사", want: "중앙여론조사" },
+  { q: "전재수 여론조사", want: "부산여론조사" }, { q: "부산시장 직무수행", want: "부산여론조사" }, { q: "부산 여론조사", want: "부산여론조사" },
+];
+async function runPollPass() {
+  if (Date.now() - pollLast < 10 * 60e3) return;
+  pollLast = Date.now();
+  for (const { q, want } of POLL_QUERIES) {
+    let j;
+    try {
+      const r = await fetch(`https://naverapihub.apigw.ntruss.com/search/v1/news?query=${encodeURIComponent(q)}&display=100&start=1&sort=date`, { headers: naverH });
+      if (!r.ok) { console.error(`여론조사 검색 실패(${q}):`, r.status); continue; }
+      j = await r.json();
+    } catch (e) { console.error(`여론조사 검색 오류(${q}):`, e.message); continue; }
+    // 최초 가동: 부산 조사는 최근 45일(드물어서 방이 비지 않게), 중앙은 2일. 이후엔 3일 이내만.
+    const maxAge = (firstRunPoll ? (want === "부산여론조사" ? 45 : 2) : 3) * 86400e3;
+    let n = 0;
+    for (const it of (j.items || []).reverse()) {
+      if (n >= 15 || isEnt(it)) continue;
+      const k = keyOf(it);
+      if (pollSeen.has(k)) continue;
+      const title = strip(it.title), ctx = strip(it.description).slice(0, 300);
+      const { name } = pressInfo(it.originallink || it.link);
+      if (specialKind({ t: title, ctx, src: name }) === "기고") continue;
+      const poll = pollKind({ t: title, ctx });
+      if (!poll || poll.topic !== want) continue;
+      const age = Date.now() - new Date(it.pubDate).getTime();
+      if (!(age < maxAge)) { pollSeen.add(k); continue; }
+      if (poll.topic === "중앙여론조사" && !MAJOR.has(name)) { pollSeen.add(k); continue; }
+      const nt = normTitle(it.title), toks = tokensOf(title);
+      if (!pollGate(poll, [k], nt, toks, name)) { pollSeen.add(k); continue; }
+      const link = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
+      if (!await sendCat(poll.topic, pollMsg(poll, title, name, link, ctx))) break;
+      pollMark(poll, [k], nt, toks);
+      n++;
+    }
+    if (n) console.log(`  여론조사 검색 ${q}: ${n}건 발송`);
+  }
+  firstRunPoll = false;
 }
 
 // ---- "TOP n" 명령 응답 / 아침 브리핑 (봇별 토큰으로 발송) ----
