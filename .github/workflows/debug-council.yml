@@ -1,0 +1,10 @@
+name: 임시 진단(시의회 접속)
+on: workflow_dispatch
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for u in "https://council.busan.go.kr/council/lawmaking" "https://council.busan.go.kr/assem/index.busan?menuCd=DOM_000000103008000000" "http://council.busan.go.kr/council/lawmaking"; do
+            echo "== $u"; curl -sk -m 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126" -L "$u" -o p.html -w "code=%{http_code} size=%{size_download} t=%{time_total}\n" || echo "curl fail rc=$?"
+          done
