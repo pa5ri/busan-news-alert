@@ -147,7 +147,7 @@ function pollGate(poll, keys, nt, toks, name) {
   // 같은 대표 수치(예: 33.8%)는 같은 발표 — 중앙은 수치당 2건까지(제목이 잘려 기관명이 안 보이는 경우 대비)
   const sameNum = poll.num ? room.filter(e => e.day === today && e.num === poll.num).length : 0;
   if (poll.topic === "중앙여론조사") return sameNum < 2 && same < (poll.agency === "기타" ? 4 : 3);
-  return poll.indirect ? same < 2 : true;
+  return poll.indirect ? same < 2 : (poll.index ? same < 3 : true);   // 지수·평판(K-브랜드지수·도시 브랜드평판·GFCI)은 발표당 3건
 }
 function pollMark(poll, keys, nt, toks) {
   for (const k of keys) pollSeen.add(k);
@@ -450,6 +450,7 @@ function saveState() {
     pollSeen: [...pollSeen].slice(-2000),
     pollTitles: [...pollTitles].slice(-2000),
     pollRecent: pollRecent.slice(-300),
+    pollIndexInit: !!state.pollIndexInit,
     wxDate: state.wxDate || "",
     jeonSeen: [...jeonSeen].slice(-4000),
     jeonInit: !!state.jeonInit,
@@ -733,6 +734,7 @@ async function runChiefPass() {
 const POLL_QUERIES = [
   { q: "대통령 지지율", want: "중앙여론조사" }, { q: "정당 지지도 여론조사", want: "중앙여론조사" }, { q: "전국지표조사", want: "중앙여론조사" },
   { q: "전재수 여론조사", want: "부산여론조사" }, { q: "부산시장 직무수행", want: "부산여론조사" }, { q: "부산 여론조사", want: "부산여론조사" },
+  { q: "K-브랜드지수 광역자치단체장", want: "부산여론조사" }, { q: "도시 브랜드평판 부산", want: "부산여론조사" },   // 지수·평판(2026-09-19)
 ];
 async function runPollPass() {
   if (Date.now() - pollLast < 10 * 60e3) return;
@@ -745,6 +747,7 @@ async function runPollPass() {
       j = await r.json();
     } catch (e) { console.error(`여론조사 검색 오류(${q}):`, e.message); continue; }
     // 최초 가동: 부산 조사는 최근 45일(드물어서 방이 비지 않게), 중앙은 2일. 이후엔 3일 이내만.
+    const idxInit = !state.pollIndexInit;   // 지수·평판 최초 1회는 45일 소급
     const maxAge = (firstRunPoll ? (want === "부산여론조사" ? 45 : 2) : 3) * 86400e3;
     let n = 0;
     for (const it of (j.items || []).reverse()) {
@@ -757,7 +760,7 @@ async function runPollPass() {
       const poll = pollKind({ t: title, ctx });
       if (!poll || poll.topic !== want) continue;
       const age = Date.now() - new Date(it.pubDate).getTime();
-      if (!(age < maxAge)) { pollSeen.add(k); continue; }
+      if (!(age < (poll.index && idxInit ? 45 * 86400e3 : maxAge))) { pollSeen.add(k); continue; }
       if (poll.topic === "중앙여론조사" && !MAJOR.has(name)) { pollSeen.add(k); continue; }
       const nt = normTitle(it.title), toks = tokensOf(title);
       if (!pollGate(poll, [k], nt, toks, name)) { pollSeen.add(k); continue; }
@@ -769,6 +772,7 @@ async function runPollPass() {
     if (n) console.log(`  여론조사 검색 ${q}: ${n}건 발송`);
   }
   firstRunPoll = false;
+  state.pollIndexInit = true;
 }
 
 // ---- "TOP n" 명령 응답 / 아침 브리핑 (봇별 토큰으로 발송) ----

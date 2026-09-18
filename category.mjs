@@ -209,8 +209,24 @@ const POLL_AGENCY = [
 const RE_POLL_T = /여론조사|지지율|지지도|국정\s?(수행|지지|운영)|직무\s?(수행|평가|만족도)|(긍정|부정)\s?평가|데드크로스|정당지표|잘한다|잘못한다|(찬성|반대)\s?(의견|여론|\d)|시정\s?(운영\s?)?평가/;
 const RE_POLL_X = /선출|당선|득표|투표율|가결|부결|명태균|자작극|여론조사\s?(의뢰|조작|비용|대납|왜곡|업체|기관\s?대표)|공표\s?금지|경선|주요\s?일정|입주민|이용객|고객|관광객|만족도\s?조사|브랜드/;
 const RE_PCT = /\d+(\.\d+)?\s?%(?!대)|\d+(\.\d+)?%p|\d위/;
+// 지수·평판(여론조사는 아니지만 매달 나오는 정례 지표, 2026-09-19 사용자 결정으로 부산 여론조사 방에 포함):
+//  ① K-브랜드지수(아시아브랜드연구소) 광역단체장 — 전재수 시장 순위 / 부산 구청장·군수 부문
+//  ② 도시 브랜드평판(한국기업평판연구소) — 부산시 순위   ③ 국제 도시지수(GFCI 등) — 부산 순위
+// 은행·공공기관·CEO 브랜드평판은 시정 지표가 아니라 제외.
+function indexKind(t, ctx) {
+  if (/은행|공공기관|공사|CEO|행장|병원|대학/.test(t)) return null;
+  const busanT = /전재수|부산/.test(t), busanC = /전재수|부산시장|부산 전재수|부산시/.test(ctx);
+  let agency = null;
+  if (/K-?\s?브랜드\s?지수|브랜드\s?지수|(광역|자치)단체장.{0,10}(평판|빅데이터)/.test(t)) agency = "K-브랜드지수";
+  else if (/도시.{0,8}브랜드\s?평판|브랜드\s?평판.{0,25}(도시|부산시)|(서울|부산)시.{0,20}브랜드\s?평판/.test(t)) agency = "도시 브랜드평판";
+  else if (/GFCI|금융센터\s?지수|살기\s?좋은\s?도시|스마트\s?(시티|도시)\s?지수|글로벌\s?도시\s?지수|도시\s?경쟁력\s?(지수|순위)|부산.{0,20}(지수|경쟁력).{0,20}\d+위/.test(t)) agency = busanT ? "도시지수" : null;
+  if (!agency || !(busanT || busanC)) return null;
+  return { topic: "부산여론조사", emoji: "📍", label: "부산 지수·평판", agency, num: "", index: true, indirect: !busanT };
+}
 export function pollKind(item) {
   const t = String(item.t || item.title || ""), ctx = String(item.ctx || item.description || "");
+  const idx = indexKind(t, ctx);
+  if (idx) return idx;
   if (RE_POLL_X.test(t)) return null;
   const agT = POLL_AGENCY.find(([, re]) => re.test(t));
   const ag = agT || POLL_AGENCY.find(([, re]) => re.test(ctx));
