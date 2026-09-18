@@ -88,6 +88,11 @@ const normTitle = t => strip(t)
 // ---- 상태 로드 ----
 let state = { seen: [], titles: [] };
 if (existsSync(STATE_FILE)) { try { state = JSON.parse(readFileSync(STATE_FILE, "utf8")); } catch {} }
+// 의정 기준점 하한(2026-09-19 클라우드 복귀 시점): 그동안 로컬 PC가 79604/16917까지 발송했으므로
+// 클라우드의 옛 기준점(78748/16758)에서 다시 시작해 142건을 재발송하지 않게 한다.
+state.ordSno = Math.max(state.ordSno || 0, 79604);
+state.ordBill = Math.max(state.ordBill || 0, 16917);
+state.ordBillSampled = true;
 const seen = new Set(state.seen || []);
 const seenTitles = new Set(state.titles || []);
 // 시당위원장 방 전용 중복 방지 — 인물 전용 검색(2차 패스)과 부산 검색(본 패스)이 같은 기사를 각각 집어올 수 있다
@@ -467,6 +472,9 @@ function saveState() {
     ordSno: state.ordSno || 0,
     ordBill: state.ordBill || 0,
     ordBillSampled: state.ordBillSampled || false,
+    ordBillQueue: state.ordBillQueue || [],
+    ordFailSince: state.ordFailSince || 0,
+    ordFailWarned: !!state.ordFailWarned,
     updated: new Date().toISOString(),
   }));
 }
@@ -1151,13 +1159,23 @@ if (intervalSec > 0 && durationMin > 0) {
     }
     await maybeTriggerNightly();
     await maybeMorningBrief();
-    // 부산시의회 의정 체크는 로컬 PC(ord-local.mjs)로 이관됨 — 시의회 서버가 해외 IP(GitHub 러너)를 차단하기 때문.
-    // 차단이 풀리면 아래 주석을 해제해 클라우드로 복귀 가능.
-    // if (Date.now() - lastOrdCheck > 55 * 60 * 1000) {
-    //   lastOrdCheck = Date.now();
-    //   await checkOrdinances(state, sendLaw, sendBill);
-    //   saveState();
-    // }
+    // 부산시의회 의정 체크 — 2026-09-19 클라우드 복귀(러너에서 200 응답 확인, 그전엔 해외 IP 차단으로 로컬 PC 전담).
+    // 30분 간격·24시간. 차단이 재발하면 조용히 멈추므로 6시간 연속 실패 시 입법예고 방에 경보 1회.
+    if (Date.now() - lastOrdCheck > 30 * 60 * 1000) {
+      lastOrdCheck = Date.now();
+      try {
+        const ok = await checkOrdinances(state, sendLaw, sendBill);
+        if (ok) { state.ordFailSince = 0; state.ordFailWarned = false; }
+        else {
+          state.ordFailSince = state.ordFailSince || Date.now();
+          if (!state.ordFailWarned && Date.now() - state.ordFailSince > 6 * 3600e3) {
+            state.ordFailWarned = true;
+            await sendLaw(`⚠️ <b>[의정 모니터링 경보]</b>\n부산시의회 서버 접속이 6시간째 실패하고 있습니다(해외 IP 차단 재발 가능성). 복구될 때까지 입법예고·의안 알림이 멈춥니다 — 로컬 PC 예약 작업 「부산의정모니터링」을 다시 켜면 우회됩니다.`);
+          }
+        }
+      } catch (e) { console.error("의정 확인 오류:", e.message); }
+      saveState();
+    }
     const remain = until - Date.now();
     if (remain <= intervalSec * 1000) break;
     // 다음 뉴스 확인까지 대기하는 동안 20초마다 "TOP n" 명령 확인 (빠른 응답)

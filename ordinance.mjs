@@ -208,6 +208,9 @@ async function checkBills(state, send) {
 
 // sendLaw = 입법예고 봇, sendBill = 의안정보 봇 (분리 운영)
 export async function checkOrdinances(state, sendLaw, sendBill) {
-  try { await checkLawmaking(state, sendLaw); } catch (e) { console.error("입법예고 확인 실패:", e.message); }
-  try { await checkBills(state, sendBill || sendLaw); } catch (e) { console.error("의안접수 확인 실패:", e.message); }
+  // 성공 여부를 돌려준다 — 호출부가 연속 실패(서버 차단 재발)를 감지해 경보를 낼 수 있게(2026-09-19)
+  let ok = true;
+  try { await checkLawmaking(state, sendLaw); } catch (e) { ok = false; console.error("입법예고 확인 실패:", e.message); }
+  try { await checkBills(state, sendBill || sendLaw); } catch (e) { ok = false; console.error("의안접수 확인 실패:", e.message); }
+  return ok;
 }

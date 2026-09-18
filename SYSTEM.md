@@ -67,7 +67,7 @@
 | insight.mjs | 키워드 순위(topIssues), 사건 클러스터링(topStories, 0.5 토큰겹침), 토크나이저(tokensOf/keyTokens), formatRanking/formatStories |
 | issues.mjs | **이슈 대장**(issues.json) — 사건 생애 추적. updateLedger(하루 1회, 멱등 아님!), composeContextBrief(연속성 브리핑), issueArticles(led: 버튼), BRIDGE 관용어 |
 | editorials.mjs | 부산일보(/opinionmain/1, [사설] 제목만)·국제신문(list.asp?code=1710, 링크 kid=1710) 사설. 부산일보 지면일=등록+1일 보정 |
-| ordinance.mjs / ord-local.mjs | 시의회 입법예고·의안. **해외 IP 차단이라 로컬 PC 작업 스케줄러**("부산의정모니터링", 평일 09:30~18:30 2시간 간격)로 실행 |
+| ordinance.mjs / ord-local.mjs | 시의회 입법예고·의안·집회 공고. **2026-09-19 클라우드 복귀**(alert.mjs 루프가 30분 간격·24시간 호출, 러너 200 응답 확인). 기준점을 만날 때까지 페이지 추적 + 상세 큐(`state.ordBillQueue`, 실행당 20건) + 12건 초과 시 '일괄 접수' 요약. 6시간 연속 실패 시 입법예고 방에 경보. 로컬 예약 작업 「부산의정모니터링」은 **사용 안 함(Disabled)** 상태로 보존 — 차단 재발 시 `Enable-ScheduledTask`로 우회(이때 ord-state.json 기준점을 state.json 값으로 맞출 것) |
 | nightly/ | 밤 10시 TV 모니터링(11개 매체 스크래핑→엑셀→전송). 클라우드 전용(puppeteer) |
 | state.json | seen/titles(중복 방지), tgOffset/briefOffset, briefedFor, surged*, edSeen/edInit. 워크플로가 커밋 |
 | issues.json | 이슈 대장. **splice 금지**(led: 버튼이 배열 인덱스 참조) |
@@ -105,7 +105,7 @@
 | 21:40 | (보조, 필수 아님) JTBC 뉴스룸 목록 로컬 수집 — 이 PC가 켜져 있으면 예약 작업 「부산JTBC수집」이 `nightly/jtbc-latest.json`을 커밋·푸시. **꺼져 있어도 아래 22:01 보고는 정상 동작** |
 | 22:01 | nightly 트리거(루프가 dispatch, 가드가 중복 방지). JTBC는 방송일이 맞는 로컬 파일이 있으면 우선, 없으면 직접 접속 |
 | 22:0x+ | **실패 매체 자동 보충**(클라우드): 보고에 items 0 + 경고 노트인 매체가 있으면 `nightly-retry.yml` 디스패치 → 30분 뒤 재수집, 잡히면 그 매체만 「보충」 메시지, 아직 실패면 30분 뒤 1회 더. **원칙: 컴퓨터 없이도 알림이 와야 한다 — PC 의존 경로는 보조로만** |
-| 평일 낮 | 의정 체크(로컬 PC) |
+| 상시(30분) | 의정 체크(클라우드 루프) |
 
 ## 6. 운영 런북
 
@@ -131,7 +131,7 @@ printf '%s' '<값>' > $SCRATCHPAD/t.txt && gh secret set TG_TOPICS < $SCRATCHPAD
 
 - **GitHub cron은 이 계정에서 발화 안 함** → 자가연쇄+watchdog. 러너가 "스텝 0개로 15분 뒤 취소"되면 인프라 문제(코드 아님) — `gh api .../jobs -q '.jobs[0].steps|length'`가 0이면 그것.
 - **텔레그램 그룹 분당 ~20건 한도는 토픽 나눠도 공유**. editForumTopic도 연속 호출 시 429.
-- **해외 IP 차단**: 시의회(전면) → 로컬 PC 이관. 국제신문(간헐) → 3회 재시도.
+- **해외 IP 차단**: 시의회는 2026-09-19 기준 해제 확인 → 클라우드 복귀(재발 시 경보 후 로컬 우회). 과거엔 전면 차단이라 로컬 PC 이관. 국제신문(간헐) → 3회 재시도.
 - **봇은 과거 메시지를 읽을 수 없다** → 텔레그램은 사본, 원본은 항상 리포 파일.
 - **이슈 대장**: BRIDGE 관용어(맞손·손잡고 등 20개)는 매칭에서 제외 — 무관 사건이 붙는 눈덩이 방지. 단 조성·구축·유치 같은 주제어는 넣지 말 것(진짜 연속 사건이 끊김). updateLedger는 같은 날짜 2회 넣으면 이중집계.
 - **씨앗(추적) 이슈**는 사건 목록과 분리 표시(🔎). 키워드는 맥락어 결합 필수("회의 생중계", "빈집 정비" — 단독 단어는 오탐).
@@ -145,6 +145,7 @@ printf '%s' '<값>' > $SCRATCHPAD/t.txt && gh secret set TG_TOPICS < $SCRATCHPAD
 - **JTBC 뉴스룸 페이지는 스크롤이 아니라 「더보기」 버튼**으로 펼쳐진다(첫 11건만 렌더). 스크롤만 하면 매일 11건에서 멈춘다(2026-08-23 발견). ⚠ 기본 뷰포트(800×600)는 모바일 레이아웃이 돼 헤더의 다른 "더보기" 링크가 먼저 잡히고 **공지사항 페이지로 이동**한다 — 반드시 데스크톱 뷰포트 + `<button>` 정확 일치 + 주소 변경 시 중단. 해외 러너는 간헐 접속 타임아웃(7일 중 1회) → **1차 소스는 로컬 PC 수집 파일** `nightly/jtbc-latest.json`(예약 작업 「부산JTBC수집」 매일 21:40, `local/jtbc-local.mjs`, 로그 `local/jtbc-local.log`). 실패한 날은 로컬에서 `node local/jtbc-local.mjs` 후 `gh workflow run jtbc-backfill.yml -f want=MM-DD`로 보충. JTBC RSS(fs.jtbc.co.kr)는 2024-10에 멈춘 죽은 피드, 네이버에도 뉴스룸 목록 없음.
 - 봇 이름은 빈 값 불가, U+115F/U+FFA0 투명문자는 가능.
 - **부산MBC는 22시대 브라우저 경로만 0건이 될 수 있다**(2026-09-13~17 연속, 낮 재현 불가) — 0건이면 서버 HTML 직접 파싱으로 보충. 매체별 0건이 며칠 이어지면 러너에서 임시 진단 워크플로(curl+puppeteer)로 낮/밤 차이부터 확인.
+- **'상위 N건만 보내고 기준점을 최신으로 올리는' 패턴은 폭주 시 유실된다** — 의안 8건 상한 때문에 8/14 일괄 접수 130건 등 142건 중 111건이 조용히 빠졌다(2026-09-19 발견·보충). 기준점 방식이면 반드시 ①기준점까지 페이지 추적 ②못 보낸 건 큐에 보존. 빈도가 낮아 보이면 원본 목록과 건수를 대조할 것.
 - **로컬 예약 작업(의정 모니터링)은 전원 조건으로 조용히 죽는다** — 배터리 구동 시 실행 거부(0x800710E0)로 금요일 오후 4회분이 누락된 적 있음(2026-08-15 발견). AllowStartIfOnBatteries + StartWhenAvailable 켜서 해결. 새 예약 작업을 만들면 이 두 설정을 반드시 확인할 것.
 - **GitHub 크론은 "안 오거나, 몇 시간 늦게 온다"** — 지연 발화가 UTC 자정을 넘기면 날짜 기반 가드가 뚫린다. nightly 가드에 KST 21~23시 시간창 추가(2026-08-15).
 
