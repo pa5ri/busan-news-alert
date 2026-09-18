@@ -1,0 +1,11 @@
+name: 임시 진단(부산MBC)
+on: workflow_dispatch
+jobs:
+  d:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          for u in "https://busanmbc.co.kr/01_new/new01.asp" "http://busanmbc.co.kr/01_new/new01.asp" "https://www.busanmbc.co.kr/01_new/new01.asp"; do
+            echo "== $u"; curl -sk -m 30 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128 Safari/537.36" -L "$u" -o p.html -w "code=%{http_code} size=%{size_download} final=%{url_effective} ip=%{remote_ip}\n" || echo "curl fail $?"
+            grep -c NewsViewFunc p.html || true; head -c 600 p.html; echo
+          done
