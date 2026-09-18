@@ -104,14 +104,28 @@ let chiefRecent = (state.chiefRecent || []).filter(e => Date.now() - e.ts < 24 *
 const DUP_OVERLAP = Number(process.env.DUP_OVERLAP || 0.7);
 // 숫자 토큰 제외(여론조사류 수치 오탐 방지) + 중복 토큰 제거(같은 단어 2회 등장 시 이중 계산 방지)
 const dupToks = toks => [...new Set(toks.filter(t => !/^\d+$/.test(t)))];
+// 가중 판정(2026-09-18): 단순 개수 0.7은 같은 보도자료의 매체별 재탕("부산시, 소상공인 1%대 금리 1.2조"
+// ×4, "해운대 방문객 1천만" ×3 등)을 못 잡았다. 이틀치 아카이브 제목의 문서빈도로 IDF를 매겨
+// 흔한 말(민선·9기·추진…)은 가볍게, 고유어(소상공인·장인화·BGF…)는 무겁게 센다. 가중 겹침 0.5↑ + 공통 토큰 2개↑.
+// 3일 실측(9/15~17, 전송 2,413건): 363건(15%) 추가 억제, 표본 검수 대부분 같은 사안.
+const DUP_WEIGHTED = Number(process.env.DUP_WEIGHTED || 0.5);
+const DF = new Map(); let DF_N = 0;
+try {
+  for (const it of loadDays([kstDate(0), kstDate(-1)])) { DF_N++; for (const t of new Set(tokensOf(it.t))) DF.set(t, (DF.get(t) || 0) + 1); }
+} catch {}
+const idf = t => DF_N ? Math.log((DF_N + 1) / ((DF.get(t) || 0) + 1)) : 1;
 function storyDup(toks, list, thr = DUP_OVERLAP) {
   const set = new Set(dupToks(toks));
+  const wA = [...set].reduce((s, x) => s + idf(x), 0);
+  const weighted = DF_N >= 200 && thr < 0.8;   // 단독·속보(0.8)는 기존 단순 판정만
   for (const e of list) {
     const et = dupToks(e.toks || []);
     const m = Math.min(set.size, et.length);
     if (m < 3) continue;                       // 토큰이 너무 적으면 판단 보류(오탐 방지)
-    let ov = 0; for (const x of et) if (set.has(x)) ov++;
+    let ov = 0, wC = 0, wB = 0;
+    for (const x of et) { const w = idf(x); wB += w; if (set.has(x)) { ov++; wC += w; } }
     if (ov / m >= thr) return true;
+    if (weighted && ov >= 2 && wC / Math.min(wA, wB) >= DUP_WEIGHTED) return true;
   }
   return false;
 }
@@ -949,6 +963,8 @@ async function runJeonIndex() {
       const url = it.originallink || it.link, k = normUrl(url);
       if (!k || jeonSeen.has(k)) continue;
       jeonSeen.add(k);
+      // 동명이인 제외: 전재수 옥천군의원(2026-09-15 실측 3건) — 시장 언급 집계에 섞이지 않게
+      if (/옥천/.test(strip(it.title) + " " + strip(it.description || ""))) continue;
       const day = new Date(new Date(it.pubDate).getTime() + 9 * 3600e3).toISOString().slice(0, 10);
       try {
         mkdirSync("archive/jeon", { recursive: true });

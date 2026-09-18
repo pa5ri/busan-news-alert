@@ -254,6 +254,31 @@ try {
         if (more.length) console.log(`  부산MBC: 2페이지에서 ${more.length}건 추가`);
       }
     } catch {}
+    // 2026-09-13부터 22시 실행에서만 브라우저 경로가 0건(낮 시간 러너 재현 시 정상 89링크). 원인 불명이라
+    // 0건이면 진단 로그를 남기고 HTML 직접 파싱(서버 렌더링 목록)으로 한 번 더 긁는다. 1·2페이지.
+    if (!items.length) {
+      try {
+        const diag = await withPage("https://busanmbc.co.kr/01_new/new01.asp", p => p.evaluate(() => ({
+          url: location.href, title: document.title, n: document.querySelectorAll('a[href*="NewsViewFunc"]').length,
+          dates: [...new Set(document.body.innerText.match(/20\d{2}-\d{2}-\d{2}/g) || [])].slice(0, 6) })), 2500);
+        console.log(`  부산MBC 진단(브라우저 0건): ${JSON.stringify(diag)}`);
+      } catch (e) { console.log(`  부산MBC 진단 실패: ${e.message}`); }
+      for (const pg of ["", "?page=2&mt=A&subt=4&smat=A&sl="]) {
+        try {
+          const html = await (await fetch(`https://busanmbc.co.kr/01_new/new01.asp${pg}`, { headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" } })).text();
+          const re = /NewsViewFunc\((\d+)\)"[^>]*title="([^"]*)"[\s\S]{0,1500}?(20\d{2}-\d{2}-\d{2})<\/p>/g;
+          let m, add = 0;
+          while ((m = re.exec(html))) {
+            if (m[3] !== D_DASH) continue;
+            const url = `https://busanmbc.co.kr/01_new/new01_view.asp?idx=${m[1]}`;
+            const title = m[2].replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&#39;/g, "'").trim().slice(0, 80);
+            if (title.length > 6 && !items.some(x => x.url === url)) { items.push({ title, url }); add++; }
+          }
+          console.log(`  부산MBC HTML 직접 파싱${pg ? "(2p)" : ""}: ${add}건`);
+          if (!add) break;
+        } catch (e) { console.log(`  부산MBC HTML 직접 파싱 실패: ${e.message}`); break; }
+      }
+    }
     let deskItems = items;
     if (items.length) {
       const timed = await withPage("https://busanmbc.co.kr/01_new/new01.asp", p => p.evaluate(async (list) => {
@@ -346,11 +371,11 @@ try {
   };
   try {
     const items = await withPage(["https://www.kookje.co.kr/", "http://www.kookje.co.kr/"], p => p.evaluate(`(${paperPick.kookje.toString()})(${JSON.stringify([D, D_NEXT])})`));
-    push("지면", "국제신문", items.slice(0, 60));
+    push("지면", "국제신문", items.slice(0, 150));   // 60 상한에 매일 걸려 잘림(2026-09-14~17 실측) → 150. 결과는 엑셀이라 길이 제약 없음
   } catch (e) { push("지면","국제신문",[],"실패: "+e.message); }
   try {
     const items = await withPage(["https://www.busan.com/", "https://busan.com/"], p => p.evaluate(`(${paperPick.busanilbo.toString()})(${JSON.stringify([D_PREV, D])})`));
-    push("지면", "부산일보", items.slice(0, 60));
+    push("지면", "부산일보", items.slice(0, 150));
   } catch (e) { push("지면","부산일보",[],"실패: "+e.message); }
 
   // ---- 맨 마지막: KBS부산 뉴스9 (방송 종료까지 대기) ----
