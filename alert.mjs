@@ -428,6 +428,20 @@ async function trackScoopSpread() {
 }
 
 // ---- 아카이브 (인사이트 분석용 축적 — archive/YYYY-MM-DD.jsonl, KST 날짜 기준) ----
+// 보조 아카이브(2026-09-28): 전용 검색 패스(여론조사·시당위원장)로 들어온 기사는 '부산' 검색 모집단이 아니라
+// archive/*.jsonl 에 넣지 않는다 — 대신 archive/poll/, archive/chief/ 에 따로 쌓는다(전재수 색인과 같은 방식).
+// 발송 여부와 무관하게 전량 기록(sent 플래그). 모집단 통계(브리핑·주간 리포트·이슈 대장)는 이 폴더를 읽지 않는다.
+function archiveSide(dir, it, pressName, extra) {
+  try {
+    const d = new Date(it.pubDate);
+    const day = new Date((isNaN(d) ? Date.now() : d.getTime()) + 9 * 3600e3).toISOString().slice(0, 10);
+    mkdirSync(`archive/${dir}`, { recursive: true });
+    appendFileSync(`archive/${dir}/${day}.jsonl`, JSON.stringify({
+      t: strip(it.title), src: pressName, pub: it.pubDate, url: it.originallink || it.link, link: it.link,
+      ctx: strip(it.description).slice(0, 300), ...extra,
+    }) + "\n");
+  } catch (e) { console.error("보조 아카이브 실패:", e.message); }
+}
 function archive(it, pressName, cat) {
   try {
     const kst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
@@ -569,6 +583,7 @@ async function runOnce() {
     // 날씨 안내는 하루 1건만(state.wxDate), 의례성(포토 캡션·운세·일정·부고류)은 상시 기록만.
     // 단독·속보는 모든 억제에서 예외.
     if (poll && !pollGate(poll, sg.grp.map(g => g.k), sg.nt, toks, name)) {   // 이미 간 조사·상한 초과 → 기록만
+      archiveSide("poll", it, name, { topic: poll.topic, agency: poll.agency, index: !!poll.index, sent: false, why: "중복·상한", via: "부산" });
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks });
@@ -638,7 +653,7 @@ async function runOnce() {
     sent++;
     recentSent.push({ ts: Date.now(), title, name, link, toks });   // 급증 감지용
     sentStories.push({ ts: Date.now(), toks, name, t: title.slice(0, 60) });   // 사안 중복 억제(12h) + 단독 확산 추적
-    if (poll) pollMark(poll, sg.grp.map(g => g.k), sg.nt, toks);
+    if (poll) { pollMark(poll, sg.grp.map(g => g.k), sg.nt, toks); archiveSide("poll", it, name, { topic: poll.topic, agency: poll.agency, index: !!poll.index, sent: true, via: "부산" }); }
     if (isWeatherInfo(title)) state.wxDate = kstDate(0);            // 오늘의 날씨 슬롯 소진
     // 단독·속보 중 '부산 사안'만 별도 토픽에도 (중요 기사 전용 방)
     if (scoopPass) {
@@ -703,8 +718,9 @@ async function runChiefPass() {
       const title = strip(it.title), ctx = strip(it.description).slice(0, 300);
       if (!(title.includes(q) || ctx.includes(q))) continue;   // 질의어가 실제로 들어간 기사만
       const nt = normTitle(it.title);
-      if (chiefTitles.has(nt)) { chiefSeen.add(k); continue; } // 같은 사건의 타 매체 버전
-      if (chiefDup(topic, tokensOf(title))) { chiefSeen.add(k); chiefTitles.add(nt); continue; } // 헤드라인만 다른 재탕
+      const pn = pressInfo(it.originallink || it.link).name;
+      if (chiefTitles.has(nt)) { chiefSeen.add(k); if (!firstRunChief) archiveSide("chief", it, pn, { topic, sent: false, why: "제목 계열 중복" }); continue; } // 같은 사건의 타 매체 버전
+      if (chiefDup(topic, tokensOf(title))) { chiefSeen.add(k); chiefTitles.add(nt); if (!firstRunChief) archiveSide("chief", it, pn, { topic, sent: false, why: "재탕" }); continue; } // 헤드라인만 다른 재탕
       fresh.push({ k, nt, it, title, ctx });
     }
     // 최초 1회: 어제까지의 백로그만 흘리고, '오늘' 기사는 발송 대상으로 남긴다
@@ -727,6 +743,7 @@ async function runChiefPass() {
         `${emoji} <b>[${label}]</b> <b>${esc(f.title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(f.ctx)}…`);
       if (!ok) break;                                       // 실패분은 다음 회차로 이월
       chiefSeen.add(f.k); chiefTitles.add(f.nt);
+      archiveSide("chief", f.it, name, { topic, sent: true });
       chiefRecent.push({ ts: Date.now(), room: topic, toks: tokensOf(f.title) });
       n++;
     }
@@ -768,13 +785,15 @@ async function runPollPass() {
       const poll = pollKind({ t: title, ctx });
       if (!poll || poll.topic !== want) continue;
       const age = Date.now() - new Date(it.pubDate).getTime();
+      const side = (sent, why) => archiveSide("poll", it, name, { topic: poll.topic, agency: poll.agency, index: !!poll.index, sent, ...(why ? { why } : {}), via: "검색" });
       if (!(age < (poll.index && idxInit ? 45 * 86400e3 : maxAge))) { pollSeen.add(k); continue; }
-      if (poll.topic === "중앙여론조사" && !MAJOR.has(name)) { pollSeen.add(k); continue; }
+      if (poll.topic === "중앙여론조사" && !MAJOR.has(name)) { pollSeen.add(k); side(false, "비메이저"); continue; }
       const nt = normTitle(it.title), toks = tokensOf(title);
-      if (!pollGate(poll, [k], nt, toks, name)) { pollSeen.add(k); continue; }
+      if (!pollGate(poll, [k], nt, toks, name)) { pollSeen.add(k); side(false, "중복·상한"); continue; }
       const link = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
       if (!await sendCat(poll.topic, pollMsg(poll, title, name, link, ctx))) break;
       pollMark(poll, [k], nt, toks);
+      side(true);
       n++;
     }
     if (n) console.log(`  여론조사 검색 ${q}: ${n}건 발송`);

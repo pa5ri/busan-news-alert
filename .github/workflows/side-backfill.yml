@@ -1,0 +1,31 @@
+name: 보조 아카이브 소급(일회성)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --no-audit --no-fund
+      - name: 소급 수집
+        env:
+          NAVER_ID: ${{ secrets.NAVER_ID }}
+          NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
+        run: node side-backfill.mjs
+      - name: 커밋
+        run: |
+          git config user.name "busan-alert-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add archive/poll archive/chief
+          git diff --cached --quiet || git commit -m "보조 아카이브 소급(여론조사·시당위원장) [skip ci]"
+          git pull --rebase -X theirs || git rebase --abort || true
+          git push
