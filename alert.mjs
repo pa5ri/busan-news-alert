@@ -6,6 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
+import { buildFrontpage } from "./frontpage.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
@@ -477,6 +478,7 @@ function saveState() {
     tgOffset: state.tgOffset || 0,
     briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
+    frontFor: state.frontFor || "",
     surgedDate: state.surgedDate || "",
     surged: (state.surged || []).slice(-50),
     scoopTrack: (state.scoopTrack || []).slice(-50),
@@ -1022,6 +1024,32 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
   }
 }
 
+// ---- 아침 8시 조간 신문 모니터링: 중앙 6개지 + 부산 2개지의 1면 머리기사·사설 제목 (2026-09-29) ----
+// 07:50 KST부터 확인. 중앙 6개지 지면이 네이버 신문보기에 모두 올라오면 발송, 덜 올라왔으면 10분 뒤 재확인,
+// 09:00이 지나면 있는 만큼 발송(완결성 우선이라 서두르지 않는다). 신문이 안 나오는 날(일요일·연휴)은 조용히 건너뜀.
+let frontLast = 0;
+async function maybeFrontpage() {
+  const kst = new Date(Date.now() + 9 * 3600e3);
+  const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  const today = kstDate(0);
+  if (mins < 7 * 60 + 50 || mins >= 11 * 60) return;
+  if (state.frontFor === today || Date.now() - frontLast < 10 * 60e3) return;
+  frontLast = Date.now();
+  const { text, results, published } = await buildFrontpage(today.replace(/-/g, ""));
+  const central = results.filter(r => !r.local && r.top).length;
+  if (central < 6 && mins < 9 * 60) { console.log(`  조간: 중앙지 ${central}/6 — 10분 뒤 재확인`); return; }
+  state.frontFor = today;
+  if (!published) { console.log("  조간: 오늘 자 지면 없음(휴간일) — 건너뜀"); saveState(); return; }
+  // 4096자 제한 대비: 중앙지 / 부산 지역지 두 장으로
+  const [a, b] = text.split("━━ 부산 지역지 ━━");
+  for (const part of [a.trim(), b ? "📰 <b>부산 지역지 1면·사설</b>" + b : ""].filter(Boolean)) {
+    const dest = (TOPIC_GROUP && TOPICS["조간신문"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["조간신문"] } : { chat_id: CHAT_IDS[0] };
+    await tgSend({ ...dest, text: part.slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "조간신문");
+  }
+  console.log(`📰 조간 신문 모니터링 발송: ${published}개지`);
+  saveState();
+}
+
 // ---- 아침 7시(KST = 22:00 UTC) 전날 TOP 10 브리핑 → 브리핑 전용 봇 ----
 async function maybeMorningBrief() {
   const now = new Date();
@@ -1180,6 +1208,7 @@ if (intervalSec > 0 && durationMin > 0) {
     }
     await maybeTriggerNightly();
     await maybeMorningBrief();
+    try { await maybeFrontpage(); } catch (e) { console.error("조간 모니터링 오류:", e.message); }
     // 부산시의회 의정 체크 — 2026-09-19 클라우드 복귀(러너에서 200 응답 확인, 그전엔 해외 IP 차단으로 로컬 PC 전담).
     // 30분 간격·24시간. 차단이 재발하면 조용히 멈추므로 6시간 연속 실패 시 입법예고 방에 경보 1회.
     if (Date.now() - lastOrdCheck > 30 * 60 * 1000) {
