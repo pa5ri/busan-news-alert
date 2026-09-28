@@ -575,6 +575,7 @@ async function runOnce() {
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks });
       archive(it, name, cat);
+      if (poll) archiveSide("poll", it, name, { topic: poll.topic, agency: poll.agency, index: !!poll.index, sent: false, why: "비메이저", via: "부산" });
       recorded++;
       continue;
     }
@@ -599,6 +600,7 @@ async function runOnce() {
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks });
       archive(it, name, cat);
+      if (poll) archiveSide("poll", it, name, { topic: poll.topic, agency: poll.agency, index: !!poll.index, sent: false, why: "의례성", via: "부산" });
       dups++;
       continue;
     }
