@@ -1025,24 +1025,28 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
 }
 
 // ---- 아침 8시 조간 신문 모니터링: 중앙 6개지 + 부산 2개지의 1면 머리기사·사설 제목 (2026-09-29) ----
-// 07:50 KST부터 확인. 중앙 6개지 지면이 네이버 신문보기에 모두 올라오면 발송, 덜 올라왔으면 10분 뒤 재확인,
-// 09:00이 지나면 있는 만큼 발송(완결성 우선이라 서두르지 않는다). 신문이 안 나오는 날(일요일·연휴)은 조용히 건너뜀.
+// 07:50 KST부터 10분 간격 확인. **8개지 전부(1면 + 사설)가 올라와야 발송** — 늦더라도 한 번에 완결해서 보낸다
+// (2026-09-29 사용자 원칙). 일부 매체가 그날 휴간·누락일 수 있어 11:00을 최종 시한으로 두고, 그때는 있는 만큼 보내되
+// 빠진 매체를 머리에 밝힌다. 전 매체 0건(일요일·연휴 휴간)은 조용히 건너뜀.
 let frontLast = 0;
 async function maybeFrontpage() {
   const kst = new Date(Date.now() + 9 * 3600e3);
   const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
   const today = kstDate(0);
-  if (mins < 7 * 60 + 50 || mins >= 11 * 60) return;
+  if (mins < 7 * 60 + 50 || mins >= 11 * 60 + 30) return;
   if (state.frontFor === today || Date.now() - frontLast < 10 * 60e3) return;
   frontLast = Date.now();
   const { text, results, published } = await buildFrontpage(today.replace(/-/g, ""));
-  const central = results.filter(r => !r.local && r.top).length;
-  if (central < 6 && mins < 9 * 60) { console.log(`  조간: 중앙지 ${central}/6 — 10분 뒤 재확인`); return; }
+  const missing = results.filter(r => !(r.top && r.editorials.length)).map(r => r.name);
+  const deadline = mins >= 11 * 60;
+  const sunday = kst.getUTCDay() === 0;
+  if (!published && (sunday || deadline)) { state.frontFor = today; console.log("  조간: 오늘 자 지면 없음(휴간일) — 건너뜀"); saveState(); return; }
+  if (missing.length && !deadline) { console.log(`  조간: 미완결(${missing.join("·")}) — 10분 뒤 재확인`); return; }
   state.frontFor = today;
-  if (!published) { console.log("  조간: 오늘 자 지면 없음(휴간일) — 건너뜀"); saveState(); return; }
   // 4096자 제한 대비: 중앙지 / 부산 지역지 두 장으로
   const [a, b] = text.split("━━ 부산 지역지 ━━");
-  for (const part of [a.trim(), b ? "📰 <b>부산 지역지 1면·사설</b>" + b : ""].filter(Boolean)) {
+  const note = missing.length ? `\n\n⚠ 11시까지 지면이 다 올라오지 않은 매체: ${missing.join(", ")}` : "";
+  for (const part of [a.trim() + note, b ? "📰 <b>부산 지역지 1면·사설</b>" + b : ""].filter(Boolean)) {
     const dest = (TOPIC_GROUP && TOPICS["조간신문"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["조간신문"] } : { chat_id: CHAT_IDS[0] };
     await tgSend({ ...dest, text: part.slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "조간신문");
   }
