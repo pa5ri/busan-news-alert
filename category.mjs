@@ -146,10 +146,11 @@ export function partyChief(item) {
   const body = String(item.ctx || "");
   // 제목 매치가 본문 매치보다 우선 — 제목이 「국민의힘 부산시당…」인데 본문에 박홍배가 스쳐
   // 민주당 방으로 새는 것을 막는다(배열 순서만으로는 앞쪽 당이 이긴다).
+  const q = re => String(re.source);   // 인물명 정규식 → 이름 문자열(동명이인 검사 키)
   for (const { topic, name, org, emoji, label } of PARTY_CHIEF)
-    if (name.test(t) || org.test(t)) return { topic, emoji, label };
+    if ((name.test(t) && !chiefHomonym(q(name), t + " " + body)) || org.test(t)) return { topic, emoji, label };
   for (const { topic, name, emoji, label } of PARTY_CHIEF)
-    if (name.test(body)) return { topic, emoji, label };
+    if (name.test(body) && !chiefHomonym(q(name), t + " " + body)) return { topic, emoji, label };
   return null;
 }
 
@@ -242,4 +243,23 @@ export function pollKind(item) {
   // 타 시도지사·교육감 평가(부산 수치 없음)는 국정·정당 조사가 아니므로 여론조사 방 대상 아님 → 기존 분야방
   if (/시장|지사|교육감|단체장|군수|구청장|\d위/.test(t) && !/대통령|국정/.test(t)) return null;
   return { topic: "중앙여론조사", emoji: "📊", label: "중앙 여론조사", agency, num };
+}
+
+// ── 시당위원장 동명이인 제외 (2026-10-01) ──
+// 실측(chief 아카이브 45일): '이성권' 603건 중 기공 강좌의 '이성권 원장'(ikunkang), 보안업체 엔키화이트햇 '이성권 대표'(주 10건대),
+// 홍성군 인사 명단, 오름연구소 등 동명이인이 섞였다. 이름 바로 뒤에 정치와 무관한 직함이 붙거나 그 조직명이 있으면 제외하되,
+// 같은 글에 정치 맥락(부산시당·위원장·전 의원·국민의힘 …)으로 이름이 다시 나오면 살린다.
+const CHIEF_NEG = {
+  "이성권": /이성권\s?(원장|대표|교수|박사|이사|사장|CEO|연구원|연구소장|주무관|팀장|과장|계장|기자|작가|감독|씨)|엔키화이트햇|기공\s?강좌|홍성군|오름연구소/,
+  "박홍배": /박홍배\s?(원장|대표|교수|박사|이사|사장|CEO|연구원|연구소장|주무관|팀장|과장|계장|기자|작가|감독|씨)/,
+};
+const CHIEF_POS = {
+  "이성권": /(국민의힘|국힘)\s?(부산시당\s?)?(위원장\s?)?이성권|이성권\s?(부산시당|시당|위원장|전\s?의원|前\s?의원|의원|국민의힘|국힘|국회의원)|이성권\s?\((국민의힘|국힘|부산|사하)/,
+  "박홍배": /(더불어민주당|민주당)\s?(부산시당\s?)?(위원장\s?)?박홍배|박홍배\s?(부산시당|시당|위원장|의원|국회의원|민주당)|박홍배\s?\((더불어민주당|민주당|부산|비례)/,
+};
+/** 동명이인 기사인가 — 이름이 정치와 무관한 직함·조직으로만 등장하면 true */
+export function chiefHomonym(name, text) {
+  const s = String(text || "");
+  const neg = CHIEF_NEG[name], pos = CHIEF_POS[name];
+  return !!(neg && neg.test(s) && !(pos && pos.test(s)));
 }

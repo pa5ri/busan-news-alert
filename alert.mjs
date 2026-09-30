@@ -7,7 +7,7 @@ import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticle
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
 import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS } from "./frontpage.mjs";
-import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
 // 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
@@ -722,6 +722,7 @@ async function runChiefPass() {
       if (chiefSeen.has(k)) continue;
       const title = strip(it.title), ctx = strip(it.description).slice(0, 300);
       if (!(title.includes(q) || ctx.includes(q))) continue;   // 질의어가 실제로 들어간 기사만
+      if (chiefHomonym(q, title + " " + ctx)) { chiefSeen.add(k); continue; }   // 동명이인(이성권 원장·엔키화이트햇 대표 등, 2026-10-01)
       const nt = normTitle(it.title);
       const pn = pressInfo(it.originallink || it.link).name;
       if (chiefTitles.has(nt)) { chiefSeen.add(k); if (!firstRunChief) archiveSide("chief", it, pn, { topic, sent: false, why: "제목 계열 중복" }); continue; } // 같은 사건의 타 매체 버전
