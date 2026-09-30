@@ -14,6 +14,7 @@
 //  JTBC 뉴스룸          → /program/NG10000002 전용판(video/NB), 페이지 날짜 검증 [프로그램+검증]
 import puppeteer from "puppeteer";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { fetchEdition } from "../frontpage.mjs";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // 부산MBC 등 인증서 문제 사이트 본문 조회용
 
@@ -369,14 +370,38 @@ try {
       return [...m.values()];
     },
   };
+  // ① 오늘 자 실제 지면 — 네이버 신문보기(면별 기사 목록, 지면 순서). 2026-09-30 교체:
+  //    그전엔 신문사 홈페이지 링크를 긁어 '지면'이라 불렀는데, 실측해 보니 오늘 자 지면과 거의 안 맞았다
+  //    (국제신문 77건 중 12건, 부산일보 46건 중 3건 일치 — 홈은 내일 자 기사·온라인 전용 기사가 섞인 화면).
+  //    제목 앞에 [N면]을 붙여 어느 면 기사인지 보이게 한다. 일요일·연휴 휴간일은 0건이 정상.
+  const todayTitles = { "국제신문": new Set(), "부산일보": new Set() };
+  const normT = t => String(t).replace(/\[[^\]]*\]/g, "").replace(/[^0-9A-Za-z가-힣]/g, "").slice(0, 14);
+  for (const [name, code] of [["국제신문", "658"], ["부산일보", "082"]]) {
+    let blocks = null, err = "";
+    for (let i = 0; i < 3 && !blocks; i++) {
+      try { blocks = await fetchEdition(code, D); } catch (e) { err = e.message; await new Promise(r => setTimeout(r, 3000)); }
+    }
+    if (!blocks) { push("지면", name, [], "실패: " + err); continue; }
+    const items = blocks.flatMap(b => b.arts.map(a => ({ title: `[${b.page}] ${a.title}`, url: a.url })));
+    for (const b of blocks) for (const a of b.arts) todayTitles[name].add(normT(a.title));
+    const s = items.length ? undefined : `${D_DASH}자 지면 없음 — 휴간일 (정상)`;
+    push("지면", name, items, s);
+    results[results.length - 1].label = `${name} · 오늘 자 지면`;
+  }
+  // ② 홈페이지 게재분(예고) — 밤 10시엔 내일 자 지면이 아직 네이버에 없으므로, 신문사 홈에 먼저 올라온 기사로 내일 자를 미리 본다.
+  //    국제신문 key=YYYYMMDD 는 지면 게재일 → D+1만(= 내일 자 확정분). 부산일보 code=YYYYMMDD 는 업로드일 → 오늘 올라온 것 중
+  //    오늘 자 지면에 이미 실린 기사를 뺀 나머지(내일 자 + 온라인 전용이 섞임 — 구분 불가라 이름에 밝힌다).
   try {
-    const items = await withPage(["https://www.kookje.co.kr/", "http://www.kookje.co.kr/"], p => p.evaluate(`(${paperPick.kookje.toString()})(${JSON.stringify([D, D_NEXT])})`));
-    push("지면", "국제신문", items.slice(0, 150));   // 60 상한에 매일 걸려 잘림(2026-09-14~17 실측) → 150. 결과는 엑셀이라 길이 제약 없음
-  } catch (e) { push("지면","국제신문",[],"실패: "+e.message); }
+    const items = await withPage(["https://www.kookje.co.kr/", "http://www.kookje.co.kr/"], p => p.evaluate(`(${paperPick.kookje.toString()})(${JSON.stringify([D_NEXT])})`));
+    push("지면", "국제신문 내일 자", items.slice(0, 150), items.length ? undefined : "홈에 내일 자 기사 없음 (정상)");
+    results[results.length - 1].label = "국제신문 · 내일 자 예고(홈 게재)";
+  } catch (e) { push("지면", "국제신문 내일 자", [], "홈 수집 실패: " + e.message + " (정상)"); }
   try {
-    const items = await withPage(["https://www.busan.com/", "https://busan.com/"], p => p.evaluate(`(${paperPick.busanilbo.toString()})(${JSON.stringify([D_PREV, D])})`));
-    push("지면", "부산일보", items.slice(0, 150));
-  } catch (e) { push("지면","부산일보",[],"실패: "+e.message); }
+    const all = await withPage(["https://www.busan.com/", "https://busan.com/"], p => p.evaluate(`(${paperPick.busanilbo.toString()})(${JSON.stringify([D])})`));
+    const items = all.filter(it => !todayTitles["부산일보"].has(normT(it.title)));
+    push("지면", "부산일보 오늘 게재", items.slice(0, 150), items.length ? undefined : "홈에 오늘 게재 기사 없음 (정상)");
+    results[results.length - 1].label = "부산일보 · 오늘 홈 게재(내일 자+온라인)";
+  } catch (e) { push("지면", "부산일보 오늘 게재", [], "홈 수집 실패: " + e.message + " (정상)"); }
 
   // ---- 맨 마지막: KBS부산 뉴스9 (방송 종료까지 대기) ----
   // KBS부산 뉴스9는 21:40쯤 시작해 22:10~22:20에 끝나고 리포트가 방송 중 순차 게시된다(2026-08-23 실측: 헤드라인 21:39 → 클로징 22:12).

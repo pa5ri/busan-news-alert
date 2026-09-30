@@ -22,13 +22,13 @@ const fstamp = dDash.replace(/-/g,"");
 const byName = Object.fromEntries(sources.map(s => [s.source, s]));
 const central = ["KBS 뉴스9","MBC 뉴스데스크","SBS 8뉴스","JTBC 뉴스룸","TV조선 뉴스9"];
 const busan   = ["KBS부산 뉴스9","부산MBC 뉴스데스크","KNN 뉴스아이","SBS 부산관련"];
-const paper   = ["국제신문","부산일보"];
+const paper   = ["국제신문","부산일보","국제신문 내일 자","부산일보 오늘 게재"];
 const cnt = n => byName[n]?.items.length || 0;
-const total = [...central, ...busan, ...paper].reduce((a,n)=>a+cnt(n), 0);
+const total = [...central, ...busan, ...paper].reduce((a,n)=>a+cnt(n), 0);   // 지면은 오늘 자 지면 + 홈 게재 예고(서로 중복 제거됨)
 const line = n => {
   const s = byName[n];
   const warn = s?.note && s.items.length === 0 && !/\(정상\)$/.test(s.note) ? " ⚠" : "";
-  return `· ${n}: ${cnt(n)}건${warn}`;
+  return `· ${s?.label || n}: ${cnt(n)}건${warn}`;
 };
 // "(정상)"으로 끝나는 노트는 안내(ℹ️)로, 나머지는 경고(⚠)로 표시
 const notes = sources.filter(s => s.note).map(s => `${/\(정상\)$/.test(s.note) ? "ℹ️" : "⚠"} ${s.source}: ${s.note}`).join("\n");

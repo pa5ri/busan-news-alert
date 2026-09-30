@@ -14,7 +14,10 @@ const unesc = s => String(s).replace(/<[^>]+>/g, "").replace(/&quot;|&#034;/g, '
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const RE_ED = /^\s*[\[<〈(【]?\s*사설\s*[\]>〉)】]?\s*/;
 
-export async function fetchPaper(code, ymd) {
+// 지면 전체(면별 기사 목록)를 돌려준다. 다른 모듈(nightly 지면 탭)도 쓴다.
+// ⚠ 네이버 신문보기는 아직 안 올라온 날짜를 요청하면 '직전 발행분'을 대신 내준다(2026-09-30 실측: 10/1 요청 → 9/30 지면).
+//   기사 링크의 ?date= 값이 요청일과 같은 것만 인정해, 어제 신문을 오늘 자로 오인하지 않게 한다.
+export async function fetchEdition(code, ymd) {
   const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 25000);
   let html;
   try {
@@ -22,12 +25,17 @@ export async function fetchPaper(code, ymd) {
     if (!r.ok) throw new Error("HTTP " + r.status);
     html = await r.text();
   } finally { clearTimeout(to); }
-  const blocks = html.split(/<div class="newspaper_inner"/).slice(1).map(b => {
+  return html.split(/<div class="newspaper_inner"/).slice(1).map(b => {
     const page = unesc((b.match(/page_notation[^>]*>([\s\S]*?)<\/span>/) || [])[1] || "");
-    const arts = [...b.matchAll(/<a[^>]*href="(https:\/\/n\.news\.naver\.com\/article\/newspaper\/\d+\/\d+)[^"]*"[\s\S]*?<strong>([\s\S]*?)<\/strong>/g)]
-      .map(m => ({ url: m[1].replace("/article/newspaper/", "/article/"), title: unesc(m[2]) })).filter(a => a.title);
+    const arts = [...b.matchAll(/<a[^>]*href="(https:\/\/n\.news\.naver\.com\/article\/newspaper\/\d+\/\d+)\?date=(\d{8})[^"]*"[\s\S]*?<strong>([\s\S]*?)<\/strong>/g)]
+      .filter(m => m[2] === ymd)
+      .map(m => ({ url: m[1].replace("/article/newspaper/", "/article/"), title: unesc(m[3]) })).filter(a => a.title);
     return { page, arts };
-  });
+  }).filter(b => b.arts.length);
+}
+
+export async function fetchPaper(code, ymd) {
+  const blocks = await fetchEdition(code, ymd);
   // 1면: 면 표기가 A1면·1면·01면 등 — 숫자가 1인 첫 블록. 못 찾으면 맨 앞 블록.
   const first = blocks.find(b => /^[A-Z]?0?1면$/.test(b.page.replace(/\s/g, ""))) || blocks[0];
   const front = first ? first.arts.filter(a => !RE_ED.test(a.title) && !/^\[(알림|사고|공고|바로잡습니다)\]/.test(a.title)) : [];

@@ -14,7 +14,7 @@ const fstamp = dateStr.slice(0,10).replace(/\./g,"");
 const LAYOUT = {
   "중앙방송": ["KBS 뉴스9","MBC 뉴스데스크","SBS 8뉴스","JTBC 뉴스룸","TV조선 뉴스9"],
   "부산방송": ["KBS부산 뉴스9","부산MBC 뉴스데스크","KNN 뉴스아이","SBS 부산관련"],
-  "지면": ["국제신문","부산일보"],
+  "지면": ["국제신문","부산일보","국제신문 내일 자","부산일보 오늘 게재"],   // 앞 2열=오늘 자 실제 지면(네이버 신문보기), 뒤 2열=홈 게재 예고
 };
 const byName = Object.fromEntries(bc.map(s => [s.source, s]));
 
@@ -22,7 +22,7 @@ const COLORS = {
   "KBS 뉴스9":"FF1A5FB4","MBC 뉴스데스크":"FF1A5FB4","SBS 8뉴스":"FF1A5FB4",
   "JTBC 뉴스룸":"FF6A1B9A","TV조선 뉴스9":"FF6A1B9A",
   "KBS부산 뉴스9":"FF00796B","부산MBC 뉴스데스크":"FF00796B","KNN 뉴스아이":"FF00796B","SBS 부산관련":"FF00796B",
-  "국제신문":"FF2E7D32","부산일보":"FF2E7D32",
+  "국제신문":"FF2E7D32","부산일보":"FF2E7D32","국제신문 내일 자":"FF827717","부산일보 오늘 게재":"FF827717",
 };
 
 const wb = new ExcelJS.Workbook();
@@ -34,7 +34,7 @@ for (const [tabName, cols] of Object.entries(LAYOUT)) {
   cols.forEach((name, ci) => {
     const src = byName[name];
     const c = head.getCell(ci+1);
-    c.value = `${name}  (${src?.items.length ?? 0})`;
+    c.value = `${src?.label || name}  (${src?.items.length ?? 0})`;
     c.fill = { type:"pattern", pattern:"solid", fgColor:{ argb: COLORS[name]||"FF37474F" } };
     c.font = { bold:true, size:12, color:{ argb:"FFFFFFFF" } };
     c.alignment = { vertical:"middle", horizontal:"center" };
