@@ -85,3 +85,23 @@ if (process.argv[1] && process.argv[1].endsWith("frontpage.mjs")) {
   console.log(text.replace(/<a href="[^"]+">|<\/a>|<\/?b>/g, ""));
   console.log("\n", results.map(r => `${r.name}:${r.pages}면/사설${r.editorials.length}`).join("  "), "| 길이", text.length);
 }
+
+// ---- 부산 지면 전체(2026-10-01): 부산일보·국제신문의 그날 지면을 면별 전체 목록으로(1면부터 마지막 면까지, 제목마다 링크) ----
+// 텔레그램 4096자 제한에 맞춰 여러 장으로 나눈다(면 경계에서 자름). 지면이 아직 없으면 null.
+export const LOCAL_PAPERS = [{ code: "082", name: "부산일보" }, { code: "658", name: "국제신문" }];
+export async function buildEditionMessages(code, name, ymd) {
+  const blocks = await fetchEdition(code, ymd);
+  if (!blocks.length) return null;
+  const d = new Date(`${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}T12:00:00+09:00`);
+  const dow = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
+  const total = blocks.reduce((s, b) => s + b.arts.length, 0);
+  const head = `📰 <b>${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) ${name} 지면</b> — ${blocks.length}개 면 ${total}건`;
+  const sections = blocks.map(b => [`<b>[${b.page}]</b>`, ...b.arts.map(a => `· <a href="${a.url}">${esc(a.title)}</a>`)].join("\n"));
+  const msgs = []; let cur = head, part = 1;
+  for (const sec of sections) {
+    if (cur.length + sec.length + 2 > 3900) { msgs.push(cur); cur = `📰 <b>${name} 지면 — 계속 ${++part}</b>`; }
+    cur += "\n\n" + sec;
+  }
+  msgs.push(cur);
+  return { msgs, pages: blocks.length, total };
+}

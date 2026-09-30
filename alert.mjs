@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { buildFrontpage } from "./frontpage.mjs";
+import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS } from "./frontpage.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
@@ -479,6 +479,7 @@ function saveState() {
     briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
     frontFor: state.frontFor || "",
+    editionFor: state.editionFor || {},
     surgedDate: state.surgedDate || "",
     surged: (state.surged || []).slice(-50),
     scoopTrack: (state.scoopTrack || []).slice(-50),
@@ -1024,6 +1025,33 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
   }
 }
 
+// ---- 아침 부산 지면 전체(2026-10-01): 부산일보·국제신문 그날 지면을 면별 전체 목록으로 「부산 지면」 방에 ----
+// 06:00 KST부터 10분 간격으로 매체별 확인 — 올라온 매체부터 바로 보낸다(확인되는 대로, 사용자 요청). 12:00까지.
+// 휴간일(일요일 등)은 지면이 없어 자연히 안 나간다. state.editionFor = { 부산일보: "YYYY-MM-DD", 국제신문: ... }
+let editionLast = 0;
+async function maybeLocalEdition() {
+  const kst = new Date(Date.now() + 9 * 3600e3);
+  const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  const today = kstDate(0);
+  if (mins < 6 * 60 || mins >= 12 * 60 || kst.getUTCDay() === 0) return;
+  state.editionFor = state.editionFor || {};
+  if (LOCAL_PAPERS.every(p => state.editionFor[p.name] === today) || Date.now() - editionLast < 10 * 60e3) return;
+  editionLast = Date.now();
+  for (const p of LOCAL_PAPERS) {
+    if (state.editionFor[p.name] === today) continue;
+    let r = null;
+    try { r = await buildEditionMessages(p.code, p.name, today.replace(/-/g, "")); } catch (e) { console.error(`부산 지면(${p.name}) 오류:`, e.message); continue; }
+    if (!r) continue;
+    const dest = (TOPIC_GROUP && TOPICS["부산지면"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["부산지면"] } : { chat_id: CHAT_IDS[0] };
+    let ok = true;
+    for (const m of r.msgs) { if (!await tgSend({ ...dest, text: m, parse_mode: "HTML", disable_web_page_preview: true }, "부산지면")) { ok = false; break; } }
+    if (!ok) { console.error(`부산 지면(${p.name}) 전송 실패 — 다음 확인 때 재시도`); continue; }
+    state.editionFor[p.name] = today;
+    console.log(`📰 부산 지면 발송: ${p.name} ${r.pages}면 ${r.total}건(${r.msgs.length}장)`);
+    saveState();
+  }
+}
+
 // ---- 아침 8시 조간 신문 모니터링: 중앙 6개지 + 부산 2개지의 1면 머리기사·사설 제목 (2026-09-29) ----
 // 07:50 KST부터 10분 간격 확인. **8개지 전부(1면 + 사설)가 올라와야 발송** — 늦더라도 한 번에 완결해서 보낸다
 // (2026-09-29 사용자 원칙). 일부 매체가 그날 휴간·누락일 수 있어 11:00을 최종 시한으로 두고, 그때는 있는 만큼 보내되
@@ -1213,6 +1241,7 @@ if (intervalSec > 0 && durationMin > 0) {
     await maybeTriggerNightly();
     await maybeMorningBrief();
     try { await maybeFrontpage(); } catch (e) { console.error("조간 모니터링 오류:", e.message); }
+    try { await maybeLocalEdition(); } catch (e) { console.error("부산 지면 오류:", e.message); }
     // 부산시의회 의정 체크 — 2026-09-19 클라우드 복귀(러너에서 200 응답 확인, 그전엔 해외 IP 차단으로 로컬 PC 전담).
     // 30분 간격·24시간. 차단이 재발하면 조용히 멈추므로 6시간 연속 실패 시 입법예고 방에 경보 1회.
     if (Date.now() - lastOrdCheck > 30 * 60 * 1000) {
