@@ -951,6 +951,8 @@ async function pollCommands(token, offsetKey) {
       if (!m || !m.text) continue;
       if (!allowedChat(m.chat.id)) continue;
       if (Date.now() / 1000 - m.date > 600) continue;
+      // 텍스트 명령(TOP·시책)은 속보봇만 처리 — 브리핑봇도 같은 그룹 메시지를 받아 두 번 답하던 문제(2026-10-02 실측). 버튼 콜백은 양쪽 그대로.
+      if (offsetKey !== "tgOffset") continue;
       // 중요시책 키워드 관리(2026-10-02): 「시책 목록」 「시책 추가 이름|패턴」 「시책 삭제 이름」 — 어느 주제에서든, 답장은 그 주제에
       const ag = m.text.match(/^\s*시책\s*(목록|추가|삭제)\s*(.*)$/s);
       if (ag) {
