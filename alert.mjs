@@ -7,7 +7,7 @@ import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticle
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
 import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS } from "./frontpage.mjs";
-import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, agendaTerms, agendaAdd, agendaRemove, agendaHit, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
 // 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
@@ -480,6 +480,7 @@ function saveState() {
     briefedFor: state.briefedFor || "",
     frontFor: state.frontFor || "",
     editionFor: state.editionFor || {},
+    agendaReviewFor: state.agendaReviewFor || "",
     surgedDate: state.surgedDate || "",
     surged: (state.surged || []).slice(-50),
     scoopTrack: (state.scoopTrack || []).slice(-50),
@@ -950,6 +951,31 @@ async function pollCommands(token, offsetKey) {
       if (!m || !m.text) continue;
       if (!allowedChat(m.chat.id)) continue;
       if (Date.now() / 1000 - m.date > 600) continue;
+      // 중요시책 키워드 관리(2026-10-02): 「시책 목록」 「시책 추가 이름|패턴」 「시책 삭제 이름」 — 어느 주제에서든, 답장은 그 주제에
+      const ag = m.text.match(/^\s*시책\s*(목록|추가|삭제)\s*(.*)$/s);
+      if (ag) {
+        const dest = { chat_id: m.chat.id };
+        if (m.message_thread_id) dest.message_thread_id = m.message_thread_id;
+        let reply;
+        try {
+          if (ag[1] === "목록") {
+            reply = `🎯 <b>중요시책 키워드 ${agendaTerms().length}개</b>\n` + agendaTerms().map(t => `· <b>${esc(t.name)}</b> <code>${esc(t.pattern)}</code>${t.note ? ` — ${esc(t.note)}` : ""} (${t.since})`).join("\n")
+              + `\n\n추가: <code>시책 추가 이름|패턴</code> (패턴 생략 가능) · 삭제: <code>시책 삭제 이름</code>`;
+          } else if (ag[1] === "추가") {
+            const [name, pat] = ag[2].split("|").map(s => s.trim());
+            const isNew = agendaAdd(name, pat);
+            state.agendaDirty = true;
+            reply = `✅ 중요시책 키워드 ${isNew ? "추가" : "수정"}: <b>${esc(name)}</b> <code>${esc(pat || name)}</code>\n지금부터 제목에 이 패턴이 있는 기사는 중요시책 방으로 갑니다(다음 회차 반영, 1시간 안에 저장).`;
+          } else {
+            const ok = agendaRemove(ag[2].trim());
+            state.agendaDirty = ok;
+            reply = ok ? `🗑 중요시책 키워드 삭제: <b>${esc(ag[2].trim())}</b>` : `해당 이름이 없습니다: ${esc(ag[2].trim())} — 「시책 목록」으로 확인`;
+          }
+        } catch (e) { reply = `⚠ 처리 실패: ${esc(e.message)}`; }
+        console.log(`명령 수신(${offsetKey}): 시책 ${ag[1]} ${ag[2].slice(0, 30)}`);
+        await tg(token, "sendMessage", { ...dest, text: reply, parse_mode: "HTML" });
+        continue;
+      }
       const mt = m.text.match(/(?:top|톱)\s*(\d{1,3})/i);
       if (mt) {
         const n = Math.min(100, Math.max(1, Number(mt[1])));
@@ -1024,6 +1050,36 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
     await tg(BRIEF_TOKEN, "sendMessage", body);
     await new Promise(r => setTimeout(r, 300));
   }
+}
+
+// ---- 중요시책 키워드 주간 점검(2026-10-02): 월요일 07:30 KST, 지난 7일 시정 기사(제목에 전재수·부산시) 중 시책어에 안 걸린 ----
+// 제목의 빈출어를 후보로 중요시책 방에 보고한다. 사용자가 「시책 추가 ○○」로 답하면 즉시 반영. 범위를 코드가 아니라 운영으로 최신화하는 장치.
+async function maybeAgendaReview() {
+  const kst = new Date(Date.now() + 9 * 3600e3);
+  const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  const today = kstDate(0);
+  if (kst.getUTCDay() !== 1 || mins < 7 * 60 + 30 || mins >= 9 * 60 || state.agendaReviewFor === today) return;
+  state.agendaReviewFor = today;
+  const days = [...Array(7)].map((_, i) => kstDate(-1 - i));
+  const items = loadDays(days).filter(it => /전재수|부산시장|부산시[,\s]/.test(it.t));
+  const hitCnt = {}; const tc = {};
+  const STOP = /^(부산시장|부산시|시장|시정|부산|추진|지원|확대|개최|사업|시민|지역|오늘|올해|이재명|대통령|정부|국회|의원|전재수|점검|방문|논의|협력|현안|대응|선정|수상|임명|민선|9기|민선9기|추석|연휴|기념식|행사|참석|강조|약속|발표|계획|예정|마련|강화|공약|국비|주민|청년|관광|안전|의혹|국힘|민주당|한동훈)$/;
+  for (const it of items) {
+    const h = agendaHit(it.t);
+    if (h) { hitCnt[h] = (hitCnt[h] || 0) + 1; continue; }
+    for (const x of new Set(tokensOf(it.t))) if (x.length >= 2 && !STOP.test(x) && !/^\d/.test(x)) tc[x] = (tc[x] || 0) + 1;
+  }
+  const cands = Object.entries(tc).filter(([, n]) => n >= 12).sort((a, b) => b[1] - a[1]).slice(0, 15);
+  const cur = Object.entries(hitCnt).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${esc(k)} ${n}`).join(" · ") || "(없음)";
+  const text = [`🎯 <b>중요시책 키워드 주간 점검</b> (${days[6]}~${days[0]}, 시정 기사 ${items.length}건)`,
+    `\n<b>현재 키워드 적중</b>: ${cur}`,
+    `\n<b>시책어에 안 걸린 시정 기사의 빈출어(후보)</b>:`,
+    cands.length ? cands.map(([k, n]) => `· ${esc(k)} ${n}건`).join("\n") : "· (12건 이상 빈출어 없음)",
+    `\n넣으려면 이 방에 <code>시책 추가 이름|패턴</code> (예: <code>시책 추가 생곡소각장</code>), 전체는 <code>시책 목록</code>`].join("\n");
+  const dest = (TOPIC_GROUP && TOPICS["중요시책"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["중요시책"] } : { chat_id: CHAT_IDS[0] };
+  await tgSend({ ...dest, text, parse_mode: "HTML", disable_web_page_preview: true }, "시책점검");
+  console.log(`🎯 중요시책 주간 점검 발송: 후보 ${cands.length}개`);
+  saveState();
 }
 
 // ---- 아침 부산 지면 전체(2026-10-01): 부산일보·국제신문 그날 지면을 면별 전체 목록으로 「부산 지면」 방에 ----
@@ -1243,6 +1299,7 @@ if (intervalSec > 0 && durationMin > 0) {
     await maybeMorningBrief();
     try { await maybeFrontpage(); } catch (e) { console.error("조간 모니터링 오류:", e.message); }
     try { await maybeLocalEdition(); } catch (e) { console.error("부산 지면 오류:", e.message); }
+    try { await maybeAgendaReview(); } catch (e) { console.error("시책 점검 오류:", e.message); }
     // 부산시의회 의정 체크 — 2026-09-19 클라우드 복귀(러너에서 200 응답 확인, 그전엔 해외 IP 차단으로 로컬 PC 전담).
     // 30분 간격·24시간. 차단이 재발하면 조용히 멈추므로 6시간 연속 실패 시 입법예고 방에 경보 1회.
     if (Date.now() - lastOrdCheck > 30 * 60 * 1000) {

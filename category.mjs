@@ -33,7 +33,39 @@ const ENT_HINT = /\[사진\]|\[포토\]|연예|예능|배우|가수|아이돌|�
 //   추가: 해수부 부산 이전·신청사(30건/월), 북항 복합환승센터(시정 현안), 민생 100일(전재수 시책 브랜드)
 //   조임: '글로벌 허브'는 허브도시·특별법 맥락만(부산대 'AI 글로벌 허브' 같은 오탐 제외)
 //   제외 유지: 북항·산업은행 단독어(일반 기사 다수), 엑스포·광역철도(부산 시책 아님), 정무직·조직개편(정치 갈등 → 정치/시의회)
-const MAYOR_AGENDA = /돔구장|글로벌\s?허브\s?도시|허브도시\s?특별법|산업은행.{0,6}(이전|유치)|산은.{0,4}(이전|유치)|2차 공공기관|공공기관.{0,6}이전|북극항로|가덕도?\s?신공항|북항\s?(재개발|복합환승센터|환승센터)|(해수부|해양수산부).{0,6}(이전|신청사|부산\s?시대)|민생\s?100일/;
+// 2026-10-02: 키워드를 agenda.json(데이터 파일)으로 분리 — 코드 수정 없이 텔레그램 명령·파일 편집으로 최신화.
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+const AGENDA_FILE = join(dirname(fileURLToPath(import.meta.url)), "agenda.json");
+let AGENDA = { terms: [] };
+let MAYOR_AGENDA = /(?!)/;
+export function agendaReload() {
+  try { AGENDA = JSON.parse(readFileSync(AGENDA_FILE, "utf8")); } catch (e) { console.error("agenda.json 읽기 실패:", e.message); }
+  const pats = (AGENDA.terms || []).map(t => t.pattern).filter(Boolean);
+  MAYOR_AGENDA = pats.length ? new RegExp(pats.join("|")) : /(?!)/;
+  return AGENDA.terms.length;
+}
+agendaReload();
+export const agendaTerms = () => AGENDA.terms.map(t => ({ ...t }));
+/** 어느 시책어에 걸렸는지(없으면 null) */
+export const agendaHit = t => { const s = String(t || ""); for (const x of AGENDA.terms) { try { if (new RegExp(x.pattern).test(s)) return x.name; } catch {} } return null; };
+export function agendaAdd(name, pattern) {
+  name = String(name || "").trim(); pattern = String(pattern || name).trim();
+  if (!name) throw new Error("이름이 비었습니다");
+  new RegExp(pattern);   // 패턴 검증(틀리면 throw)
+  const i = AGENDA.terms.findIndex(t => t.name === name);
+  const rec = { name, pattern, since: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10), note: "텔레그램 명령" };
+  if (i >= 0) AGENDA.terms[i] = { ...AGENDA.terms[i], ...rec }; else AGENDA.terms.push(rec);
+  writeFileSync(AGENDA_FILE, JSON.stringify(AGENDA, null, 2) + "\n"); agendaReload(); return i < 0;
+}
+export function agendaRemove(name) {
+  name = String(name || "").trim();
+  const before = AGENDA.terms.length;
+  AGENDA.terms = AGENDA.terms.filter(t => t.name !== name);
+  if (AGENDA.terms.length === before) return false;
+  writeFileSync(AGENDA_FILE, JSON.stringify(AGENDA, null, 2) + "\n"); agendaReload(); return true;
+}
 /** 시정 핵심공약 기사인가 — 전용 방(핵심공약) 라우팅용. 아카이브 분야 태그는 categorize()가 '정치'로 남긴다. */
 export const isAgenda = t => MAYOR_AGENDA.test(String(t || ""));
 
