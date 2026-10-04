@@ -1,0 +1,22 @@
+name: 주제 생성(봇 API)
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: "새 주제 이름"
+        required: true
+
+jobs:
+  make:
+    runs-on: ubuntu-latest
+    steps:
+      - name: createForumTopic
+        env:
+          TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          GROUP: ${{ secrets.TG_TOPIC_GROUP }}
+          NAME: ${{ inputs.name }}
+        run: |
+          # 주제 ID(message_thread_id)는 비밀이 아니므로 로그에 남긴다. 토큰·그룹 ID는 출력하지 않는다.
+          res=$(curl -s -X POST "https://api.telegram.org/bot${TOKEN}/createForumTopic" --data-urlencode "chat_id=${GROUP}" --data-urlencode "name=${NAME}")
+          echo "$res" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const j=JSON.parse(d);if(j.ok)console.log("THREAD_ID="+j.result.message_thread_id+" NAME="+j.result.name);else{console.log("FAILED: "+j.description);process.exit(1)}})'
