@@ -482,6 +482,7 @@ function saveState() {
     editionFor: state.editionFor || {},
     agendaReviewFor: state.agendaReviewFor || "",
     riskInit: !!state.riskInit,
+    riskVer: state.riskVer || 0,
     surgedDate: state.surgedDate || "",
     surged: (state.surged || []).slice(-50),
     scoopTrack: (state.scoopTrack || []).slice(-50),
@@ -1082,25 +1083,29 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
   }
 }
 
-// ---- 리스크 방 최초 소급(2026-10-04): 방이 비어 있지 않게 최근 10일 아카이브의 리스크 보도를 사안별 대표 기사로 한 번만 보낸다 ----
+// ---- 리스크 방 소급: 최근 10일 아카이브의 리스크 보도를 사안별 대표 기사로 한 번만 ----
+// riskVer 1 = 사법(10/4 최초), 2 = 시정 지적 확장분. 이미 보낸 갈래는 다시 보내지 않는다.
 async function maybeRiskBackfill() {
-  if (state.riskInit || !(TOPIC_GROUP && TOPICS["리스크"])) return;
-  state.riskInit = true;
-  const items = loadDays([...Array(10)].map((_, i) => kstDate(-i))).filter(it => riskNews(it) && specialKind(it) !== "기고" && !pollKind(it) && !councilNews(it) && !partyChief(it))
+  const ver = state.riskVer || (state.riskInit ? 1 : 0);
+  if (ver >= 2 || !(TOPIC_GROUP && TOPICS["리스크"])) return;
+  state.riskInit = true; state.riskVer = 2;
+  const wantKinds = ver === 0 ? ["사법", "지적"] : ["지적"];
+  const items = loadDays([...Array(10)].map((_, i) => kstDate(-i)))
+    .filter(it => { const r = riskNews(it); return r && wantKinds.includes(r.kind) && specialKind(it) !== "기고" && !pollKind(it) && !councilNews(it) && !partyChief(it); })
     .sort((a, b) => new Date(a.pub) - new Date(b.pub));
   const kept = [];
   for (const it of items) {
     const toks = tokensOf(it.t);
-    if (!MAJOR.has(it.src) && kept.length) { if (storyDup(toks, kept, 0.5)) continue; }
-    if (storyDup(toks, kept)) continue;
+    if (storyDup(toks, kept) || (!MAJOR.has(it.src) && kept.length && storyDup(toks, kept, 0.5))) continue;
     kept.push({ toks, it });
     if (kept.length >= 25) break;
   }
   for (const { it } of kept) {
+    const r = riskNews(it);
     const d = new Date(new Date(it.pub).getTime() + 9 * 3600e3).toISOString().slice(5, 10).replace("-", "/");
-    await sendCat("리스크", `⚠️ <b>[리스크 · 소급 ${d}]</b> <b>${esc(it.t)}</b>\n<i>${esc(it.src)}</i>\n${it.url}\n\n…${esc(it.ctx || "")}…`);
+    await sendCat("리스크", `⚠️ <b>[${r.label} · 소급 ${d}]</b> <b>${esc(it.t)}</b>\n<i>${esc(it.src)}</i>\n${it.url}\n\n…${esc(it.ctx || "")}…`);
   }
-  console.log(`⚠️ 리스크 방 소급: ${kept.length}건(후보 ${items.length}건)`);
+  console.log(`⚠️ 리스크 방 소급(${wantKinds.join("·")}): ${kept.length}건(후보 ${items.length}건)`);
   saveState();
 }
 
