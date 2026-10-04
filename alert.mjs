@@ -618,7 +618,7 @@ async function runOnce() {
     // 기고·칼럼도 분야방 대신 기고방에만(2026-08-24 사용자 요청, 중복 제거). 말머리 괄호는 떼되 제목 뒤 괄호([○○의 시론])는 그대로.
     // 시당위원장 기사는 시당 방에만(2026-08-30 사용자 결정 — 분야방 병행 폐지).
     // 이미 시당 방에 간 사안(URL·제목 계열·토큰 재탕)이면 분야방에도 안 보내고 기록만.
-    if (chief && !council && !poll && special !== "기고") {
+    if (chief && !council && !poll && special !== "기고" && !(risk && risk.kind === "정치권")) {
       if (sg.grp.some(g => chiefSeen.has(g.k)) || chiefTitles.has(sg.nt) || chiefDup(chief.topic, toks)) {
         for (const g of sg.grp) seen.add(g.k);
         seenTitles.add(sg.nt);
@@ -640,6 +640,9 @@ async function runOnce() {
         })()
       : poll
         ? [poll.topic, pollMsg(poll, title, name, link, ctx)]
+      : (risk && risk.kind === "정치권")
+        // 민주당 부산시당·부산시의원의 사법·도덕성 보도는 시의회·시당 방 대신 리스크 방으로(2026-10-04 확대)
+        ? [risk.topic, `${risk.emoji} <b>[${risk.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
       : council
         ? [council.topic, `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
         : chief
@@ -1087,11 +1090,11 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
 // riskVer 1 = 사법(10/4 최초), 2 = 시정 지적 확장분. 이미 보낸 갈래는 다시 보내지 않는다.
 async function maybeRiskBackfill() {
   const ver = state.riskVer || (state.riskInit ? 1 : 0);
-  if (ver >= 2 || !(TOPIC_GROUP && TOPICS["리스크"])) return;
-  state.riskInit = true; state.riskVer = 2;
-  const wantKinds = ver === 0 ? ["사법", "지적"] : ["지적"];
+  if (ver >= 3 || !(TOPIC_GROUP && TOPICS["리스크"])) return;
+  state.riskInit = true; state.riskVer = 3;
+  const wantKinds = ver === 0 ? ["사법", "지적", "정치권"] : ver === 1 ? ["지적", "정치권"] : ["정치권"];
   const items = loadDays([...Array(10)].map((_, i) => kstDate(-i)))
-    .filter(it => { const r = riskNews(it); return r && wantKinds.includes(r.kind) && specialKind(it) !== "기고" && !pollKind(it) && !councilNews(it) && !partyChief(it); })
+    .filter(it => { const r = riskNews(it); return r && wantKinds.includes(r.kind) && specialKind(it) !== "기고" && !pollKind(it) && (r.kind === "정치권" || (!councilNews(it) && !partyChief(it))); })
     .sort((a, b) => new Date(a.pub) - new Date(b.pub));
   const kept = [];
   for (const it of items) {

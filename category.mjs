@@ -318,11 +318,30 @@ const CIVIC_CRITIC = /경실련|참여연대|시민단체|시민연대|시민사
 const CRIT_ATTACK = /비판|직격|질타|규탄|공세|맹공|저격|성토|항의|반발|쓴소리|촉구|해명|사과하라|사과해야|철회|취소해야|책임져야|답하라|침묵|참회|제정신|망신|내로남불|직무유기|무능|불통|공부 좀/;
 const CRIT_FRAME = /졸속|뒷북|늑장|난맥|혈세|탁상행정|전시행정|부실|엉터리|주먹구구|도마|빈축|책임론|밀실|일방\s?추진|논란|파문|후폭풍|낙하산|보은\s?인사/;
 const CENTRAL_TARGET = /정부|대통령|이재명|李|해수부|해양수산부|국토부|기재부|교육부|국방부|민주당|與/;
+// [리스크 · 시당·시의원] (2026-10-04 확대, 사용자 결정: 이름 명단이 필요한 '관련 정치인'은 제외하고 제목만으로 확실한 것만)
+//   ① 민주당 부산시당(조직·관계자) + 사법·도덕성어   ② 제목에 '부산시의원/부산시의회 의원' + 사법·도덕성어
+//   ③ 제목에 민주당 + (시의원·구의원·지역위원장) + 사법·도덕성어, 기사에 부산 맥락
+//   제외: 민주당이 야권을 공격하는 기사(야권 표기 + 공격 표현) — 예: 「민주당 부산시당, 백종헌 전 보좌관 뇌물 구속기소에 직접 해명 촉구」
+// 이 갈래는 시의회·시당 방보다 먼저 판정한다(그러지 않으면 조직명 때문에 시당·시의회 방으로 간다).
+const RISK_ETHICS = /성비위|성추행|성희롱|성폭력|갑질|음주운전|막말|폭행|제명|탈당\s?권고|당원권\s?정지|윤리위|윤리특위|공천\s?개입|돈봉투|정치자금법/;
+const DP_MARK = /더불어민주당|민주당/;
+const DP_BUSAN_ORG = /(더불어민주당|민주당)\s?부산\s?시당/;
+const BUSAN_COUNCILOR = /부산\s?시의원|부산시의회\s?[가-힣]{0,6}\s?의원/;
+const LOCAL_ROLE = /(?<![가-힣])시의원|시·구의원|구의원|지역위원장/;
+function politicsRisk(t, ctx) {
+  if (!(RISK_LEGAL.test(t) || RISK_ETHICS.test(t))) return false;
+  if (OPPOSITION.test(t) && CRIT_ATTACK.test(t) && DP_MARK.test(t)) return false;   // 민주당이 야권을 공격하는 구도
+  if (DP_BUSAN_ORG.test(t)) return true;
+  if (BUSAN_COUNCILOR.test(t)) return true;
+  if (DP_MARK.test(t) && LOCAL_ROLE.test(t) && /부산/.test(t + " " + ctx)) return true;
+  return false;
+}
 /** 리스크 방 판별. 해당 없으면 null. → { topic, emoji, label, kind: "사법"|"지적" } */
 export function riskNews(item) {
   const t = String(item.t || item.title || "");
-  const out = kind => ({ topic: "리스크", emoji: "⚠️", label: kind === "사법" ? "리스크 · 사법" : "리스크 · 시정 지적", kind });
+  const out = kind => ({ topic: "리스크", emoji: "⚠️", label: kind === "사법" ? "리스크 · 사법" : kind === "정치권" ? "리스크 · 시당·시의원" : "리스크 · 시정 지적", kind });
   if (RISK_WHO.test(t) && (RISK_LEGAL.test(t) || (RISK_STAFF.test(t) && RISK_ATTACK.test(t)))) return out("사법");
+  if (politicsRisk(t, String(item.ctx || item.description || ""))) return out("정치권");
   const target = CIVIC_TARGET.test(t) || CIVIC_ORG.test(t);
   const attack = CRIT_ATTACK.test(t);
   if (target && attack && (OPPOSITION.test(t) || CIVIC_CRITIC.test(t))) return out("지적");                       // ①
