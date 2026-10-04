@@ -295,3 +295,20 @@ export function chiefHomonym(name, text) {
   const neg = CHIEF_NEG[name], pos = CHIEF_POS[name];
   return !!(neg && neg.test(s) && !(pos && pos.test(s)));
 }
+
+// ── 리스크 방 (2026-10-04) ──
+// 시장·시청을 둘러싼 사법·도덕성 리스크 보도를 한 방에. 기준은 '제목'에 ①대상(전재수·부산시장·부산시 간부/공무원/산하기관·부산시청)
+// + ②사법·도덕성 단어(의혹·수사·기소·유죄·구속·증거인멸·특혜·비리…). 실측(9/15~10/4, 20일): 77건, 표본 전수 정탐.
+// '비판·책임·논란' 같은 정치 공세어만으로는 잡지 않는다(실측 7건 중 5건 오탐 — "안전 책임질 것" 등).
+// 단, 진행 중인 보좌진 사건은 공세·침묵 기사도 후속이므로 '보좌진/비서관 + 공세어'는 포함.
+const RISK_WHO = /전재수|부산시장|田\s?시장|부산시\s?(간부|공무원|고위|산하|출자|출연)|부산시청/;
+const RISK_LEGAL = /의혹|수사|기소|유죄|무죄|재판|공판|구속|고발|고소|압수수색|증거인멸|특혜|비리|뇌물|금품|횡령|배임|선거법|통일교|징계|감사원|감사\s?착수|직권남용|송치|입건|벌금|실형|집행유예/;
+const RISK_STAFF = /보좌진|보좌관|비서관/;
+const RISK_ATTACK = /해명|사퇴|책임|규탄|직격|질타|공세|침묵|답하라|숨지\s?마/;
+/** 리스크 방 판별. 해당 없으면 null. */
+export function riskNews(item) {
+  const t = String(item.t || item.title || "");
+  if (!RISK_WHO.test(t)) return null;
+  if (RISK_LEGAL.test(t) || (RISK_STAFF.test(t) && RISK_ATTACK.test(t))) return { topic: "리스크", emoji: "⚠️", label: "리스크" };
+  return null;
+}

@@ -7,7 +7,7 @@ import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticle
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
 import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS } from "./frontpage.mjs";
-import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, agendaTerms, agendaAdd, agendaRemove, agendaHit, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
+import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, riskNews, agendaTerms, agendaAdd, agendaRemove, agendaHit, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
 // 1회 실행당 최대 전송 — 사실상 제한이 아니다(관측된 최대 폭주가 48건).
@@ -481,6 +481,7 @@ function saveState() {
     frontFor: state.frontFor || "",
     editionFor: state.editionFor || {},
     agendaReviewFor: state.agendaReviewFor || "",
+    riskInit: !!state.riskInit,
     surgedDate: state.surgedDate || "",
     surged: (state.surged || []).slice(-50),
     scoopTrack: (state.scoopTrack || []).slice(-50),
@@ -569,12 +570,13 @@ async function runOnce() {
     const special = specialKind(rec);          // 인터뷰(시장)·르포·기고 — 전용 방 추가 발송
     const chief = partyChief(rec);             // 여야 시당위원장(박홍배·이성권) — 전용 방 추가 발송
     const council = councilNews(rec);          // 부산시의회·시의원 — 전용 방 추가 발송
+    const risk = riskNews(rec);                // 시장·시청 사법·도덕성 리스크 — 리스크 방으로 '대신' 발송(매체 불문)
     const poll = special === "기고" ? null : pollKind(rec);   // 여론조사(중앙·부산) — 전용 방으로 '대신' 발송
     const toks = tokensOf(title);
 
     // 매체 필터: 비메이저는 전송 없이 기록만 (아카이브·급증 감지·이슈 대장에는 전량 반영)
     // 단독·속보와 별도 관리 유형은 매체 불문 통과 (군소 매체 비중이 높은 유형)
-    if (!MAJOR.has(name) && !scoopPass && !special && !chief && !council && !(poll && poll.topic === "부산여론조사")) {
+    if (!MAJOR.has(name) && !scoopPass && !special && !chief && !council && !(poll && poll.topic === "부산여론조사") && !risk) {
       for (const g of sg.grp) seen.add(g.k);
       seenTitles.add(sg.nt);
       recentSent.push({ ts: Date.now(), title, name, link, toks });
@@ -641,6 +643,9 @@ async function runOnce() {
         ? [council.topic, `${council.emoji} <b>[${council.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
         : chief
           ? [chief.topic, `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
+          : risk
+            // 리스크(2026-10-04): 시장·시청 관련 사법·도덕성 보도는 분야방·중요시책 대신 이 방에만. 시의회·시당 기사는 원래 방 우선.
+            ? [risk.topic, `${risk.emoji} <b>[${risk.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
           : isAgenda(title)
             // 중요시책(돔구장·글로벌허브도시·산은/공공기관 이전·북극항로·가덕신공항·북항 재개발/환승센터·해수부 이전·민생100일)은 이 방에만
             ? ["중요시책", `🎯 <b>[중요시책 · ${esc(agendaHit(title) || "")}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
@@ -1077,6 +1082,28 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
   }
 }
 
+// ---- 리스크 방 최초 소급(2026-10-04): 방이 비어 있지 않게 최근 10일 아카이브의 리스크 보도를 사안별 대표 기사로 한 번만 보낸다 ----
+async function maybeRiskBackfill() {
+  if (state.riskInit || !(TOPIC_GROUP && TOPICS["리스크"])) return;
+  state.riskInit = true;
+  const items = loadDays([...Array(10)].map((_, i) => kstDate(-i))).filter(it => riskNews(it) && specialKind(it) !== "기고" && !pollKind(it) && !councilNews(it) && !partyChief(it))
+    .sort((a, b) => new Date(a.pub) - new Date(b.pub));
+  const kept = [];
+  for (const it of items) {
+    const toks = tokensOf(it.t);
+    if (!MAJOR.has(it.src) && kept.length) { if (storyDup(toks, kept, 0.5)) continue; }
+    if (storyDup(toks, kept)) continue;
+    kept.push({ toks, it });
+    if (kept.length >= 25) break;
+  }
+  for (const { it } of kept) {
+    const d = new Date(new Date(it.pub).getTime() + 9 * 3600e3).toISOString().slice(5, 10).replace("-", "/");
+    await sendCat("리스크", `⚠️ <b>[리스크 · 소급 ${d}]</b> <b>${esc(it.t)}</b>\n<i>${esc(it.src)}</i>\n${it.url}\n\n…${esc(it.ctx || "")}…`);
+  }
+  console.log(`⚠️ 리스크 방 소급: ${kept.length}건(후보 ${items.length}건)`);
+  saveState();
+}
+
 // ---- 중요시책 키워드 주간 점검(2026-10-02, 10-04 고도화): 월요일 07:30 KST ----
 // ① 현재 키워드별 적중 수 + 제목에 부산 맥락이 없는 비율(패턴이 너무 넓은지 신호) ② 4주간 0건인 키워드(정리 후보)
 // ③ 시책어에 안 걸린 시정 기사의 빈출어를 '사안 단위'로 묶어 대표 제목과 함께 제시(낱말만 나열하면 같은 사건이 여러 줄로 쪼개진다).
@@ -1347,6 +1374,7 @@ if (intervalSec > 0 && durationMin > 0) {
     try { await maybeFrontpage(); } catch (e) { console.error("조간 모니터링 오류:", e.message); }
     try { await maybeLocalEdition(); } catch (e) { console.error("부산 지면 오류:", e.message); }
     try { await maybeAgendaReview(); } catch (e) { console.error("시책 점검 오류:", e.message); }
+    try { await maybeRiskBackfill(); } catch (e) { console.error("리스크 소급 오류:", e.message); }
     // 부산시의회 의정 체크 — 2026-09-19 클라우드 복귀(러너에서 200 응답 확인, 그전엔 해외 IP 차단으로 로컬 PC 전담).
     // 30분 간격·24시간. 차단이 재발하면 조용히 멈추므로 6시간 연속 실패 시 입법예고 방에 경보 1회.
     if (Date.now() - lastOrdCheck > 30 * 60 * 1000) {
