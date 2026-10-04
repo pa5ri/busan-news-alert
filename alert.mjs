@@ -643,7 +643,7 @@ async function runOnce() {
           ? [chief.topic, `${chief.emoji} <b>[${chief.label}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
           : isAgenda(title)
             // 중요시책(돔구장·글로벌허브도시·산은/공공기관 이전·북극항로·가덕신공항·북항 재개발/환승센터·해수부 이전·민생100일)은 이 방에만
-            ? ["중요시책", `🎯 <b>[중요시책]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
+            ? ["중요시책", `🎯 <b>[중요시책 · ${esc(agendaHit(title) || "")}]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${link}\n\n…${esc(ctx)}…`]
             : (() => {   // 사회·생활/문화·기타는 사건·사고/날씨·재난이면 그 방으로만
                 const sub = socialSub(cat, rec);
                 if (!sub) return [cat, msg];
@@ -953,6 +953,29 @@ async function pollCommands(token, offsetKey) {
       if (Date.now() / 1000 - m.date > 600) continue;
       // 텍스트 명령(TOP·시책)은 속보봇만 처리 — 브리핑봇도 같은 그룹 메시지를 받아 두 번 답하던 문제(2026-10-02 실측). 버튼 콜백은 양쪽 그대로.
       if (offsetKey !== "tgOffset") continue;
+      // 「시책 시험 패턴」: 넣기 전에 지난 7일 아카이브에서 몇 건·어떤 제목이 걸리는지 미리 본다(2026-10-04). 「시책 점검」: 주간 점검을 지금 본다.
+      const at = m.text.match(/^\s*시책\s*(시험|점검)\s*(.*)$/s);
+      if (at) {
+        const dest = { chat_id: m.chat.id };
+        if (m.message_thread_id) dest.message_thread_id = m.message_thread_id;
+        let reply;
+        try {
+          if (at[1] === "점검") reply = await maybeAgendaReview(true);
+          else {
+            const re = new RegExp(at[2].trim());
+            const hits = loadDays([...Array(7)].map((_, i) => kstDate(-i))).filter(it => re.test(it.t));
+            const uniq = [...new Set(hits.map(it => it.t))];
+            const nb = hits.filter(it => !RE_BUSAN_T.test(it.t)).length;
+            const dup = hits.filter(it => agendaHit(it.t)).length;
+            reply = `🧪 <b>시책 시험</b> <code>${esc(at[2].trim())}</code>\n지난 7일 ${hits.length}건(하루 ${(hits.length / 7).toFixed(1)}건) · 제목에 부산 맥락 없음 ${nb}건 · 이미 다른 시책어에 걸림 ${dup}건\n`
+              + (uniq.length ? uniq.slice(0, 8).map(t => `· ${esc(t.slice(0, 50))}`).join("\n") : "· (걸리는 제목 없음)")
+              + `\n\n괜찮으면 <code>시책 추가 이름|${esc(at[2].trim())}</code>`;
+          }
+        } catch (e) { reply = `⚠ 처리 실패: ${esc(e.message)}`; }
+        console.log(`명령 수신(${offsetKey}): 시책 ${at[1]} ${at[2].slice(0, 30)}`);
+        await tg(token, "sendMessage", { ...dest, text: String(reply).slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true });
+        continue;
+      }
       // 중요시책 키워드 관리(2026-10-02): 「시책 목록」 「시책 추가 이름|패턴」 「시책 삭제 이름」 — 어느 주제에서든, 답장은 그 주제에
       const ag = m.text.match(/^\s*시책\s*(목록|추가|삭제)\s*(.*)$/s);
       if (ag) {
@@ -1054,34 +1077,56 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
   }
 }
 
-// ---- 중요시책 키워드 주간 점검(2026-10-02): 월요일 07:30 KST, 지난 7일 시정 기사(제목에 전재수·부산시) 중 시책어에 안 걸린 ----
-// 제목의 빈출어를 후보로 중요시책 방에 보고한다. 사용자가 「시책 추가 ○○」로 답하면 즉시 반영. 범위를 코드가 아니라 운영으로 최신화하는 장치.
-async function maybeAgendaReview() {
+// ---- 중요시책 키워드 주간 점검(2026-10-02, 10-04 고도화): 월요일 07:30 KST ----
+// ① 현재 키워드별 적중 수 + 제목에 부산 맥락이 없는 비율(패턴이 너무 넓은지 신호) ② 4주간 0건인 키워드(정리 후보)
+// ③ 시책어에 안 걸린 시정 기사의 빈출어를 '사안 단위'로 묶어 대표 제목과 함께 제시(낱말만 나열하면 같은 사건이 여러 줄로 쪼개진다).
+const RE_BUSAN_T = /부산|전재수|가덕|북항|BPA|에어부산|생곡|동백전|부울경|PK|해운대|사직|시의회/;
+const AGENDA_STOP = /^(부산시장|부산시|시장|시정|부산|추진|지원|확대|개최|사업|시민|지역|오늘|올해|이재명|대통령|정부|국회|의원|전재수|점검|방문|논의|협력|현안|대응|선정|수상|임명|민선|9기|민선9기|추석|연휴|기념식|행사|참석|강조|약속|발표|계획|예정|마련|강화|공약|국비|주민|청년|관광|안전|의혹|국힘|민주당|한동훈|개인|된다|직접|해명)$/;
+function agendaCandidates(items, minN = 12) {
+  const byTok = new Map();
+  items.forEach((it, i) => { for (const x of new Set(tokensOf(it.t))) if (x.length >= 2 && !AGENDA_STOP.test(x) && !/^\d/.test(x)) { if (!byTok.has(x)) byTok.set(x, new Set()); byTok.get(x).add(i); } });
+  const toks = [...byTok.entries()].filter(([, s]) => s.size >= minN).sort((a, b) => b[1].size - a[1].size);
+  const groups = [];
+  for (const [tok, set] of toks) {
+    // 이미 있는 묶음과 기사 집합이 60% 이상 겹치면 같은 사안
+    const g = groups.find(g => { let ov = 0; for (const i of set) if (g.set.has(i)) ov++; return ov / Math.min(set.size, g.set.size) >= 0.6; });
+    if (g) { g.toks.push(tok); for (const i of set) g.set.add(i); } else groups.push({ toks: [tok], set: new Set(set) });
+  }
+  return groups.slice(0, 8).map(g => {
+    const titles = [...g.set].map(i => items[i].t);
+    const head = titles.sort((a, b) => g.toks.filter(t => b.includes(t)).length - g.toks.filter(t => a.includes(t)).length)[0];
+    return { toks: g.toks.slice(0, 4), n: g.set.size, head };
+  });
+}
+async function maybeAgendaReview(force = false) {
   const kst = new Date(Date.now() + 9 * 3600e3);
   const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
   const today = kstDate(0);
-  if (kst.getUTCDay() !== 1 || mins < 7 * 60 + 30 || mins >= 9 * 60 || state.agendaReviewFor === today) return;
-  state.agendaReviewFor = today;
+  if (!force && (kst.getUTCDay() !== 1 || mins < 7 * 60 + 30 || mins >= 9 * 60 || state.agendaReviewFor === today)) return null;
+  if (!force) state.agendaReviewFor = today;
   const days = [...Array(7)].map((_, i) => kstDate(-1 - i));
-  const items = loadDays(days).filter(it => /전재수|부산시장|부산시[,\s]/.test(it.t));
-  const hitCnt = {}; const tc = {};
-  const STOP = /^(부산시장|부산시|시장|시정|부산|추진|지원|확대|개최|사업|시민|지역|오늘|올해|이재명|대통령|정부|국회|의원|전재수|점검|방문|논의|협력|현안|대응|선정|수상|임명|민선|9기|민선9기|추석|연휴|기념식|행사|참석|강조|약속|발표|계획|예정|마련|강화|공약|국비|주민|청년|관광|안전|의혹|국힘|민주당|한동훈)$/;
-  for (const it of items) {
-    const h = agendaHit(it.t);
-    if (h) { hitCnt[h] = (hitCnt[h] || 0) + 1; continue; }
-    for (const x of new Set(tokensOf(it.t))) if (x.length >= 2 && !STOP.test(x) && !/^\d/.test(x)) tc[x] = (tc[x] || 0) + 1;
-  }
-  const cands = Object.entries(tc).filter(([, n]) => n >= 12).sort((a, b) => b[1] - a[1]).slice(0, 15);
-  const cur = Object.entries(hitCnt).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${esc(k)} ${n}`).join(" · ") || "(없음)";
-  const text = [`🎯 <b>중요시책 키워드 주간 점검</b> (${days[6]}~${days[0]}, 시정 기사 ${items.length}건)`,
-    `\n<b>현재 키워드 적중</b>: ${cur}`,
-    `\n<b>시책어에 안 걸린 시정 기사의 빈출어(후보)</b>:`,
-    cands.length ? cands.map(([k, n]) => `· ${esc(k)} ${n}건`).join("\n") : "· (12건 이상 빈출어 없음)",
-    `\n넣으려면 이 방에 <code>시책 추가 이름|패턴</code> (예: <code>시책 추가 생곡소각장</code>), 전체는 <code>시책 목록</code>`].join("\n");
+  const week = loadDays(days);
+  const stat = {};
+  for (const it of week) { const h = agendaHit(it.t); if (!h) continue; (stat[h] = stat[h] || { n: 0, nb: 0 }); stat[h].n++; if (!RE_BUSAN_T.test(it.t)) stat[h].nb++; }
+  const month = loadDays([...Array(28)].map((_, i) => kstDate(-1 - i)));
+  const alive = new Set(); for (const it of month) { const h = agendaHit(it.t); if (h) alive.add(h); }
+  const stale = agendaTerms().map(t => t.name).filter(n => !alive.has(n));
+  const civic = week.filter(it => /전재수|부산시장|부산시[,\s]/.test(it.t) && !agendaHit(it.t));
+  const cands = agendaCandidates(civic);
+  const cur = Object.entries(stat).sort((a, b) => b[1].n - a[1].n)
+    .map(([k, v]) => `· ${esc(k)} ${v.n}건${v.n >= 8 && v.nb / v.n >= 0.5 ? ` ⚠ 제목에 부산 맥락 없음 ${Math.round(v.nb / v.n * 100)}%` : ""}`).join("\n") || "· (없음)";
+  const text = [`🎯 <b>중요시책 키워드 주간 점검</b> (${days[6]}~${days[0]})`,
+    `\n<b>① 현재 키워드 적중</b>\n${cur}`,
+    stale.length ? `\n<b>② 4주간 0건(정리 후보)</b>: ${stale.map(esc).join(", ")}\n   빼려면 <code>시책 삭제 이름</code>` : "",
+    `\n<b>③ 시책어에 안 걸린 시정 사안(후보, ${civic.length}건 중)</b>`,
+    cands.length ? cands.map(c => `· <b>${esc(c.toks.join("·"))}</b> ${c.n}건 — ${esc(String(c.head).slice(0, 46))}`).join("\n") : "· (12건 이상 묶음 없음)",
+    `\n넣기 전 확인: <code>시책 시험 패턴</code> → 넣기: <code>시책 추가 이름|패턴</code> · 전체: <code>시책 목록</code>`].filter(Boolean).join("\n");
+  if (force) return text;
   const dest = (TOPIC_GROUP && TOPICS["중요시책"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["중요시책"] } : { chat_id: CHAT_IDS[0] };
-  await tgSend({ ...dest, text, parse_mode: "HTML", disable_web_page_preview: true }, "시책점검");
-  console.log(`🎯 중요시책 주간 점검 발송: 후보 ${cands.length}개`);
+  await tgSend({ ...dest, text: text.slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "시책점검");
+  console.log(`🎯 중요시책 주간 점검 발송: 후보 ${cands.length}묶음, 정리 후보 ${stale.length}개`);
   saveState();
+  return text;
 }
 
 // ---- 아침 부산 지면 전체(2026-10-01): 부산일보·국제신문 그날 지면을 면별 전체 목록으로 「부산 지면」 방에 ----
