@@ -89,19 +89,26 @@ if (process.argv[1] && process.argv[1].endsWith("frontpage.mjs")) {
 // ---- 부산 지면 전체(2026-10-01): 부산일보·국제신문의 그날 지면을 면별 전체 목록으로(1면부터 마지막 면까지, 제목마다 링크) ----
 // 텔레그램 4096자 제한에 맞춰 여러 장으로 나눈다(면 경계에서 자름). 지면이 아직 없으면 null.
 export const LOCAL_PAPERS = [{ code: "082", name: "부산일보" }, { code: "658", name: "국제신문" }];
-export async function buildEditionMessages(code, name, ymd) {
+// mentionKeys: 전재수 언급 기사의 네이버 기사 키("082/0001234567") 집합 — 제목에 이름이 없어도 본문 언급이면 강조한다(전재수 색인 기반).
+// 강조 표기: 「★ 굵은 제목」 + 머리말에 건수. 링크는 그대로 유지.
+export async function buildEditionMessages(code, name, ymd, mentionKeys = new Set()) {
   const blocks = await fetchEdition(code, ymd);
   if (!blocks.length) return null;
   const d = new Date(`${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}T12:00:00+09:00`);
   const dow = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
   const total = blocks.reduce((s, b) => s + b.arts.length, 0);
-  const head = `📰 <b>${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) ${name} 지면</b> — ${blocks.length}개 면 ${total}건`;
-  const sections = blocks.map(b => [`<b>[${b.page}]</b>`, ...b.arts.map(a => `· <a href="${a.url}">${esc(a.title)}</a>`)].join("\n"));
+  const keyOf = url => (String(url).match(/article\/(\d+\/\d+)/) || [])[1] || "";
+  const isMention = a => /전재수/.test(a.title) || mentionKeys.has(keyOf(a.url));
+  const mentions = blocks.reduce((s, b) => s + b.arts.filter(isMention).length, 0);
+  const head = `📰 <b>${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) ${name} 지면</b> — ${blocks.length}개 면 ${total}건`
+    + (mentions ? `\n★ <b>전재수 언급 ${mentions}건</b> (굵게 표시)` : "");
+  const line = a => isMention(a) ? `★ <b><a href="${a.url}">${esc(a.title)}</a></b>` : `· <a href="${a.url}">${esc(a.title)}</a>`;
+  const sections = blocks.map(b => [`<b>[${b.page}]</b>`, ...b.arts.map(line)].join("\n"));
   const msgs = []; let cur = head, part = 1;
   for (const sec of sections) {
     if (cur.length + sec.length + 2 > 3900) { msgs.push(cur); cur = `📰 <b>${name} 지면 — 계속 ${++part}</b>`; }
     cur += "\n\n" + sec;
   }
   msgs.push(cur);
-  return { msgs, pages: blocks.length, total };
+  return { msgs, pages: blocks.length, total, mentions };
 }

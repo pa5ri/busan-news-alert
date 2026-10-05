@@ -1168,6 +1168,19 @@ async function maybeAgendaReview(force = false) {
 // 06:00 KST부터 10분 간격으로 매체별 확인 — 올라온 매체부터 바로 보낸다(확인되는 대로, 사용자 요청). 12:00까지.
 // 휴간일(일요일 등)은 지면이 없어 자연히 안 나간다. state.editionFor = { 부산일보: "YYYY-MM-DD", 국제신문: ... }
 let editionLast = 0;
+// 전재수 색인(archive/jeon)의 네이버 링크에서 기사 키("082/0001234567")를 뽑는다 — 부산 지면에서 본문 언급 기사 강조용(2026-10-05)
+function jeonArticleKeys(dates) {
+  const keys = new Set();
+  for (const d of dates) {
+    const f = `archive/jeon/${d}.jsonl`;
+    if (!existsSync(f)) continue;
+    for (const l of readFileSync(f, "utf8").split("\n")) {
+      if (!l) continue;
+      try { const m = String(JSON.parse(l).link || "").match(/article\/(?:mnews\/)?(\d+\/\d+)/); if (m) keys.add(m[1]); } catch {}
+    }
+  }
+  return keys;
+}
 async function maybeLocalEdition() {
   const kst = new Date(Date.now() + 9 * 3600e3);
   const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
@@ -1179,14 +1192,14 @@ async function maybeLocalEdition() {
   for (const p of LOCAL_PAPERS) {
     if (state.editionFor[p.name] === today) continue;
     let r = null;
-    try { r = await buildEditionMessages(p.code, p.name, today.replace(/-/g, "")); } catch (e) { console.error(`부산 지면(${p.name}) 오류:`, e.message); continue; }
+    try { r = await buildEditionMessages(p.code, p.name, today.replace(/-/g, ""), jeonArticleKeys([kstDate(0), kstDate(-1), kstDate(-2)])); } catch (e) { console.error(`부산 지면(${p.name}) 오류:`, e.message); continue; }
     if (!r) continue;
     const dest = (TOPIC_GROUP && TOPICS["부산지면"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["부산지면"] } : { chat_id: CHAT_IDS[0] };
     let ok = true;
     for (const m of r.msgs) { if (!await tgSend({ ...dest, text: m, parse_mode: "HTML", disable_web_page_preview: true }, "부산지면")) { ok = false; break; } }
     if (!ok) { console.error(`부산 지면(${p.name}) 전송 실패 — 다음 확인 때 재시도`); continue; }
     state.editionFor[p.name] = today;
-    console.log(`📰 부산 지면 발송: ${p.name} ${r.pages}면 ${r.total}건(${r.msgs.length}장)`);
+    console.log(`📰 부산 지면 발송: ${p.name} ${r.pages}면 ${r.total}건(${r.msgs.length}장), 전재수 언급 ${r.mentions}건`);
     saveState();
   }
 }
