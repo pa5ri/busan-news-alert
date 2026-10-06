@@ -7,6 +7,7 @@ import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticle
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
 import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS } from "./frontpage.mjs";
+import { isInterviewBody, RE_MAYOR_QUOTE } from "./interview.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, riskNews, agendaTerms, agendaAdd, agendaRemove, agendaHit, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
@@ -483,6 +484,7 @@ function saveState() {
     agendaReviewFor: state.agendaReviewFor || "",
     riskInit: !!state.riskInit,
     riskVer: state.riskVer || 0,
+    interviewBackfillVer: state.interviewBackfillVer || 0,
     surgedDate: state.surgedDate || "",
     surged: (state.surged || []).slice(-50),
     scoopTrack: (state.scoopTrack || []).slice(-50),
@@ -568,7 +570,11 @@ async function runOnce() {
     const cat = categorize({ t: title, ctx, nlink: it.link, url: it.originallink });
     const rec = { t: title, ctx, nlink: it.link, url: it.originallink, src: name };
     const scoopPass = isScoop(title) && isBusanRelevant(rec);
-    const special = specialKind(rec);          // 인터뷰(시장)·르포·기고 — 전용 방 추가 발송
+    let special = specialKind(rec);            // 인터뷰(시장)·르포·기고 — 전용 방 추가 발송
+    // 제목에 '인터뷰'가 없는 시장 문답 기사(2026-10-06 실측: 머니투데이 「"되돌릴 수 없는 해양수도…"」)는 본문을 읽어 판별
+    if (!special && RE_MAYOR_QUOTE.test(title) && /n\.news\.naver\.com/.test(it.link || "")) {
+      try { if (await isInterviewBody(it.link)) { special = "인터뷰"; console.log(`  본문 판별 인터뷰: ${title.slice(0, 40)}`); } } catch {}
+    }
     const chief = partyChief(rec);             // 여야 시당위원장(박홍배·이성권) — 전용 방 추가 발송
     const council = councilNews(rec);          // 부산시의회·시의원 — 전용 방 추가 발송
     const risk = riskNews(rec);                // 시장·시청 사법·도덕성 리스크 — 리스크 방으로 '대신' 발송(매체 불문)
@@ -1086,6 +1092,35 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
   }
 }
 
+// ---- 인터뷰 소급(2026-10-06, 1회): 최근 14일 전재수 색인에서 제목에 '인터뷰'가 없는 시장 발언형 기사의 본문을 읽어 인터뷰면 인터뷰 방에 ----
+// 제목 규칙만으로는 놓친 문답체 인터뷰(머니투데이·뉴시스 취임 100일, 노컷 라디오 전문)를 채운다. 실측 39건 조회 → 3건.
+async function maybeInterviewBackfill() {
+  if ((state.interviewBackfillVer || 0) >= 1 || !(TOPIC_GROUP && TOPICS["인터뷰"])) return;
+  state.interviewBackfillVer = 1;
+  const seenT = new Set(); const cands = [];
+  for (const d of [...Array(14)].map((_, i) => kstDate(-i))) {
+    const f = `archive/jeon/${d}.jsonl`;
+    if (!existsSync(f)) continue;
+    for (const l of readFileSync(f, "utf8").split("\n")) {
+      if (!l) continue; let r; try { r = JSON.parse(l); } catch { continue; }
+      if (!RE_MAYOR_QUOTE.test(r.t) || specialKind({ t: r.t }) || !/n\.news\.naver\.com/.test(r.link || "")) continue;
+      const k = r.t.replace(/\s/g, "").slice(0, 20); if (seenT.has(k)) continue; seenT.add(k);
+      cands.push(r);
+    }
+  }
+  let n = 0;
+  for (const r of cands.sort((a, b) => new Date(a.pub) - new Date(b.pub))) {
+    let ok = false; try { ok = await isInterviewBody(r.link); } catch {}
+    if (!ok) continue;
+    const { name } = pressInfo(r.url || r.link);
+    const d = new Date(new Date(r.pub).getTime() + 9 * 3600e3).toISOString().slice(5, 10).replace("-", "/");
+    if (!await sendCat("인터뷰", `${SPECIAL_EMOJI["인터뷰"]} <b>[인터뷰 · 소급 ${d}]</b> <b>${esc(r.t)}</b>\n<i>${esc(name)}</i>\n${r.link}`)) break;
+    n++;
+  }
+  console.log(`🎤 인터뷰 소급: 후보 ${cands.length}건 조회 → ${n}건 발송`);
+  saveState();
+}
+
 // ---- 리스크 방 소급: 최근 10일 아카이브의 리스크 보도를 사안별 대표 기사로 한 번만 ----
 // riskVer 1 = 사법(10/4 최초), 2 = 시정 지적 확장분. 이미 보낸 갈래는 다시 보내지 않는다.
 async function maybeRiskBackfill() {
@@ -1396,6 +1431,7 @@ if (intervalSec > 0 && durationMin > 0) {
     try { await maybeLocalEdition(); } catch (e) { console.error("부산 지면 오류:", e.message); }
     try { await maybeAgendaReview(); } catch (e) { console.error("시책 점검 오류:", e.message); }
     try { await maybeRiskBackfill(); } catch (e) { console.error("리스크 소급 오류:", e.message); }
+    try { await maybeInterviewBackfill(); } catch (e) { console.error("인터뷰 소급 오류:", e.message); }
     // 부산시의회 의정 체크 — 2026-09-19 클라우드 복귀(러너에서 200 응답 확인, 그전엔 해외 IP 차단으로 로컬 PC 전담).
     // 30분 간격·24시간. 차단이 재발하면 조용히 멈추므로 6시간 연속 실패 시 입법예고 방에 경보 1회.
     if (Date.now() - lastOrdCheck > 30 * 60 * 1000) {
