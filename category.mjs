@@ -312,7 +312,11 @@ const RISK_STAFF = /보좌진|보좌관|비서관/;
 const RISK_ATTACK = /해명|사퇴|책임|규탄|직격|질타|공세|침묵|답하라|숨지\s?마/;
 // 시정 지적
 const CIVIC_TARGET = /전재수|부산시장|부산시정|부산시청|부산시(?!의회|의원|당|교육청|민|립|내)/;
-const CIVIC_ORG = /부산영상위|부산국제영화제|BIFF|부산도시공사|부산교통공사|부산시설공단|부산관광공사|벡스코|부산의료원|부산문화재단|부산연구원|부산테크노파크|부산경제진흥원|부산신용보증재단|부산환경공단/;
+// 영화제·시상식은 '행사'라 배우 개인 논란이 꼬리표([BIFF])만으로 딸려온다(10/6 실측: 황정민·김가현 '논란 딛고 참석') → 별도 묶음으로 두고 규칙 ③에서 기관 행위 단어를 요구
+const FEST_ORG = /부산국제영화제|BIFF|부국제|영화의전당|부일영화상/;
+const FEST_ACT = /취소|철회|파행|운영|예산|지원|일정|시사회|초청|상영|선정|심사|집행위|조직위|이사장|위원장/;
+const ENT_MARK = /참석|공식석상|무대\s?올라|레드카펫|포토월|사생활|열애|결혼|이혼|화보|드레스|\[ST포토\]|\[포토\]/;
+const CIVIC_ORG = /부산영상위|부산도시공사|부산교통공사|부산시설공단|부산관광공사|벡스코|부산의료원|부산문화재단|부산연구원|부산테크노파크|부산경제진흥원|부산신용보증재단|부산환경공단/;
 const OPPOSITION = /국민의힘|국힘|野|야권|야당|개혁신당|주진우|박수영|김도읍|조경태|이헌승|김희정|정동만|백종헌|김미애|박성훈|곽규택|서지영|정성국|조승환|김대식|정연욱|한동훈/;
 const CIVIC_CRITIC = /경실련|참여연대|시민단체|시민연대|시민사회|환경단체|노조|청년단체|학부모|주민들|상인들/;
 const CRIT_ATTACK = /비판|직격|질타|규탄|공세|맹공|저격|성토|항의|반발|쓴소리|촉구|해명|사과하라|사과해야|철회|취소해야|책임져야|답하라|침묵|참회|제정신|망신|내로남불|직무유기|무능|불통|공부 좀/;
@@ -342,11 +346,13 @@ export function riskNews(item) {
   const out = kind => ({ topic: "리스크", emoji: "⚠️", label: kind === "사법" ? "리스크 · 사법" : kind === "정치권" ? "리스크 · 시당·시의원" : "리스크 · 시정 지적", kind });
   if (RISK_WHO.test(t) && (RISK_LEGAL.test(t) || (RISK_STAFF.test(t) && RISK_ATTACK.test(t)))) return out("사법");
   if (politicsRisk(t, String(item.ctx || item.description || ""))) return out("정치권");
-  const target = CIVIC_TARGET.test(t) || CIVIC_ORG.test(t);
+  const cityTarget = CIVIC_TARGET.test(t) || CIVIC_ORG.test(t);
+  const target = cityTarget || FEST_ORG.test(t);
   const attack = CRIT_ATTACK.test(t);
   if (target && attack && (OPPOSITION.test(t) || CIVIC_CRITIC.test(t))) return out("지적");                       // ①
   if (OPPOSITION.test(t) && attack && MAYOR_AGENDA.test(t) && !CENTRAL_TARGET.test(t)) return out("지적");          // ②
-  if (target && CRIT_FRAME.test(t)) return out("지적");                                                            // ③
+  if (cityTarget && CRIT_FRAME.test(t)) return out("지적");                                                        // ③
+  if (!cityTarget && FEST_ORG.test(t) && CRIT_FRAME.test(t) && FEST_ACT.test(t) && !ENT_MARK.test(t)) return out("지적"); // ③-영화제: 기관 행위(취소·운영·예산…)가 있고 연예 표지가 없을 때만
   if (/["“'‘]\s?전재수[,\s]/.test(t) && attack) return out("지적");                                                // ④
   return null;
 }
