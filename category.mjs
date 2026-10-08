@@ -349,7 +349,10 @@ export function mayorSpeaks(t) {
   const open = s.search(/["“'‘]/);                                      // 시장 인용부: 첫 여는 따옴표 ~ 그 다음 닫는 따옴표
   const closeRel = open >= 0 ? s.slice(open + 1).search(/["”'’]/) : -1;
   const tail = closeRel >= 0 ? s.slice(open + 1 + closeRel + 1) : "";     // 그 뒤 꼬리
-  return !(new RegExp(`(${OPPOSITION.source})[^"“]{0,12}["“]`).test(tail));   // 되받는 야권 인용이 없으면 시장 발언 기사
+  // 꼬리에서 따옴표 안쪽(누군가의 인용문 내용)은 지우고, 바깥에 야권 인사 이름이 남아야 '되받기'다.
+  // 「…"김도읍, 아주 나쁜 정치" 비판」은 김도읍이 시장 인용문 안에 있으므로 되받기가 아니다(10/8 2차 수정).
+  const outside = tail.replace(/["“'‘][^"”'’]*["”'’]/g, " ");
+  return !OPPOSITION.test(outside);
 }
 /** 리스크 방 판별. 해당 없으면 null. → { topic, emoji, label, kind: "사법"|"지적" } */
 export function riskNews(item) {
