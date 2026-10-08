@@ -340,12 +340,24 @@ function politicsRisk(t, ctx) {
   if (DP_MARK.test(t) && LOCAL_ROLE.test(t) && /부산/.test(t + " " + ctx)) return true;
   return false;
 }
+// 시장이 화자인 제목(말머리 뒤 '전재수/부산시장 + 따옴표'로 시작)은 시정 지적이 아니다 — 10/8 실측: 「전재수 "돔 아레나 임기 내 착공"…"김도읍, 아주 나쁜 정치" 비판」이
+// '김도읍(야권)+비판+전재수'로 걸렸는데 방향이 반대(시장이 김도읍을 비판). 단, 뒤에 야권 인사가 따옴표로 되받으면(「전재수 "…"→주진우 "웬 편지쇼?"」) 지적으로 둔다.
+const stripHead = t => String(t).replace(/^\s*[\[\(【][^\]\)】]*[\]\)】]\s*/, "");
+export function mayorSpeaks(t) {
+  const s = stripHead(t);
+  if (!/^(전재수|田|부산시장|전\s?시장)(\s?(부산)?시장)?[,\s]{0,2}["“'‘]/.test(s)) return false;
+  const open = s.search(/["“'‘]/);                                      // 시장 인용부: 첫 여는 따옴표 ~ 그 다음 닫는 따옴표
+  const closeRel = open >= 0 ? s.slice(open + 1).search(/["”'’]/) : -1;
+  const tail = closeRel >= 0 ? s.slice(open + 1 + closeRel + 1) : "";     // 그 뒤 꼬리
+  return !(new RegExp(`(${OPPOSITION.source})[^"“]{0,12}["“]`).test(tail));   // 되받는 야권 인용이 없으면 시장 발언 기사
+}
 /** 리스크 방 판별. 해당 없으면 null. → { topic, emoji, label, kind: "사법"|"지적" } */
 export function riskNews(item) {
   const t = String(item.t || item.title || "");
   const out = kind => ({ topic: "리스크", emoji: "⚠️", label: kind === "사법" ? "리스크 · 사법" : kind === "정치권" ? "리스크 · 시당·시의원" : "리스크 · 시정 지적", kind });
   if (RISK_WHO.test(t) && (RISK_LEGAL.test(t) || (RISK_STAFF.test(t) && RISK_ATTACK.test(t)))) return out("사법");
   if (politicsRisk(t, String(item.ctx || item.description || ""))) return out("정치권");
+  if (mayorSpeaks(t)) return null;                                                                                // 시장 본인 발언 기사(10/8)
   const cityTarget = CIVIC_TARGET.test(t) || CIVIC_ORG.test(t);
   const target = cityTarget || FEST_ORG.test(t);
   const attack = CRIT_ATTACK.test(t);
