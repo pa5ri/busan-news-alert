@@ -12,7 +12,7 @@ export const PAPERS = [
 const unesc = s => String(s).replace(/<[^>]+>/g, "").replace(/&quot;|&#034;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<")
   .replace(/&gt;/g, ">").replace(/&apos;|&#39;|&#039;/g, "'").replace(/\s+/g, " ").trim();
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const RE_ED = /^\s*[\[<〈(【]?\s*사설\s*[\]>〉)】]?\s*/;
+const RE_ED = /^\s*[\[<〈(【]?\s*사설\s*[\]>〉)】]?\s*|\s*[\[<〈(【]\s*사설\s*[\]>〉)】]?\s*$/;   // 앞 말머리 또는 뒤 꼬리표(문화일보 「…[사설]」, 10/12)
 
 // 지면 전체(면별 기사 목록)를 돌려준다. 다른 모듈(nightly 지면 탭)도 쓴다.
 // ⚠ 네이버 신문보기는 아직 안 올라온 날짜를 요청하면 '직전 발행분'을 대신 내준다(2026-09-30 실측: 10/1 요청 → 9/30 지면).
@@ -111,4 +111,58 @@ export async function buildEditionMessages(code, name, ymd, mentionKeys = new Se
   }
   msgs.push(cur);
   return { msgs, pages: blocks.length, total, mentions: picked.length };
+}
+
+// ---- 석간 신문 모니터링 (2026-10-12): 문화일보·내일신문의 1면 머리기사·사설, 조간과 같은 양식으로 「조간/석간 신문」 방에 ----
+// 문화일보(021)는 네이버 신문보기(사설 표기가 제목 뒤 '[사설]'). 내일신문은 네이버 지면보기가 없어(086 → 404) 자사 홈을 읽는다:
+//   1면 = 홈 메인 기사(section.main-news 첫 기사, 이미지 경로 paper/YYYY/MM/DD로 당일 자 검증), 사설 = /opinion/editorial 목록 중 당일 날짜 항목.
+export const EVENING_PAPERS = [{ code: "021", name: "문화일보" }, { code: "naeil", name: "내일신문" }];
+
+async function getText(url) {
+  const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 25000);
+  try {
+    const r = await fetch(url, { headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" }, signal: ac.signal });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.text();
+  } finally { clearTimeout(to); }
+}
+export async function fetchNaeil(ymd) {
+  const home = await getText("https://www.naeil.com/");
+  const main = (home.match(/<section class="main-news">([\s\S]*?)<\/section>/) || [])[1] || "";
+  const img = (main.match(/paper\/(\d{4})\/(\d{2})\/(\d{2})\//) || []);
+  const edDate = img.length ? img[1] + img[2] + img[3] : "";
+  const t = main.match(/<a href="(\/news\/read\/\d+)"[^>]*>\s*<img[^>]*alt="([^"]+)"/) || main.match(/<a href="(\/news\/read\/\d+)"[^>]*>([^<]{6,})<\/a>/);
+  const top = (t && edDate === ymd) ? { url: "https://www.naeil.com" + t[1], title: unesc(t[2]) } : null;
+  const ed = await getText("https://www.naeil.com/opinion/editorial");
+  const want = `${ymd.slice(4, 6)}.${ymd.slice(6, 8)}`;
+  const editorials = [];
+  for (const m of ed.matchAll(/<p class="date">([\d.]+)<\/p>\s*<p class="year">(\d{4})<\/p>[\s\S]*?<a href="(\/news\/read\/\d+)">([^<]+)<\/a>/g)) {
+    if (m[1] !== want || m[2] !== ymd.slice(0, 4)) continue;
+    const url = "https://www.naeil.com" + m[3];
+    if (!editorials.some(e => e.url === url)) editorials.push({ url, title: unesc(m[4]).replace(/^\[사설\]\s*/, "") });
+  }
+  return { pages: top ? 1 : 0, top, front: [], editorials };
+}
+/** 석간 메시지(HTML). 발행이 없는 날(토·일·연휴)은 published=0 */
+export async function buildEvening(ymd) {
+  const d = new Date(`${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}T12:00:00+09:00`);
+  const dow = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
+  const results = [];
+  for (const p of EVENING_PAPERS) {
+    let r = null, err = "";
+    for (let i = 0; i < 3 && !r; i++) {
+      try { r = p.code === "naeil" ? await fetchNaeil(ymd) : await fetchPaper(p.code, ymd); } catch (e) { err = e.message; await new Promise(x => setTimeout(x, 3000)); }
+    }
+    results.push({ ...p, ...(r || { pages: 0, top: null, front: [], editorials: [] }), err: r ? "" : err });
+  }
+  const section = r => {
+    const L = [`<b>[ ${r.name} ]</b>`];
+    if (!r.top) { L.push(r.err ? `- 수집 실패(${esc(r.err)})` : "- 오늘 자 지면 없음"); return L.join("\n"); }
+    L.push(`- 1면 : <a href="${r.top.url}">${esc(r.top.title)}</a>`);
+    if (!r.editorials.length) L.push("- 사설 : (목록에 없음)");
+    r.editorials.slice(0, 5).forEach((a, i) => L.push(`- 사설 ${r.editorials.length > 1 ? CIRC[i] + " " : ""}: <a href="${a.url}">${esc(a.title)}</a>`));
+    return L.join("\n");
+  };
+  const text = [`📰 <b>${ymd.slice(0, 4)}년 ${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) 석간 신문 모니터링</b>`, ...results.map(section)].join("\n\n");
+  return { text, results, published: results.filter(r => r.top).length };
 }

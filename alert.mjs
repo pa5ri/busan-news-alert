@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS } from "./frontpage.mjs";
+import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS, buildEvening } from "./frontpage.mjs";
 import { isInterviewBody, interviewCheck, RE_MAYOR_QUOTE } from "./interview.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, riskNews, agendaTerms, agendaAdd, agendaRemove, agendaHit, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
@@ -480,6 +480,7 @@ function saveState() {
     briefOffset: state.briefOffset || 0,
     briefedFor: state.briefedFor || "",
     frontFor: state.frontFor || "",
+    eveningFor: state.eveningFor || "",
     editionFor: state.editionFor || {},
     agendaReviewFor: state.agendaReviewFor || "",
     riskInit: !!state.riskInit,
@@ -1202,6 +1203,30 @@ async function maybeAgendaReview(force = false) {
   return text;
 }
 
+// ---- 석간 신문 모니터링(2026-10-12): 문화일보·내일신문 1면·사설 → 「조간/석간 신문」 방(키 "조간신문" 그대로) ----
+// 14:30 KST부터 10분 간격. 두 매체 모두(1면+사설) 갖춰지면 발송, 17:30이 넘으면 있는 만큼(빠진 매체 표기). 전 매체 0건(토·일·연휴)은 건너뜀.
+let eveningLast = 0;
+async function maybeEvening() {
+  const kst = new Date(Date.now() + 9 * 3600e3);
+  const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  const today = kstDate(0);
+  if (mins < 14 * 60 + 30 || mins >= 18 * 60 + 30 || kst.getUTCDay() === 0 || kst.getUTCDay() === 6) return;
+  if (state.eveningFor === today || Date.now() - eveningLast < 10 * 60e3) return;
+  eveningLast = Date.now();
+  const { text, results, published } = await buildEvening(today.replace(/-/g, ""));
+  const missing = results.filter(r => !(r.top && r.editorials.length)).map(r => r.name);
+  const deadline = mins >= 17 * 60 + 30;
+  if (!published && deadline) { state.eveningFor = today; console.log("  석간: 오늘 자 지면 없음(휴간) — 건너뜀"); saveState(); return; }
+  if (missing.length && !deadline) { console.log(`  석간: 미완결(${missing.join("·")}) — 10분 뒤 재확인`); return; }
+  if (!published) return;
+  state.eveningFor = today;
+  const note = missing.length ? `\n\n⚠ 17:30까지 지면이 다 올라오지 않은 매체: ${missing.join(", ")}` : "";
+  const dest = (TOPIC_GROUP && TOPICS["조간신문"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["조간신문"] } : { chat_id: CHAT_IDS[0] };
+  await tgSend({ ...dest, text: (text + note).slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "석간신문");
+  console.log(`📰 석간 신문 모니터링 발송: ${published}개지`);
+  saveState();
+}
+
 // ---- 아침 부산 지면 전체(2026-10-01): 부산일보·국제신문 그날 지면을 면별 전체 목록으로 「부산 지면」 방에 ----
 // 06:00 KST부터 10분 간격으로 매체별 확인 — 올라온 매체부터 바로 보낸다(확인되는 대로, 사용자 요청). 12:00까지.
 // 휴간일(일요일 등)은 지면이 없어 자연히 안 나간다. state.editionFor = { 부산일보: "YYYY-MM-DD", 국제신문: ... }
@@ -1432,6 +1457,7 @@ if (intervalSec > 0 && durationMin > 0) {
     await maybeMorningBrief();
     try { await maybeFrontpage(); } catch (e) { console.error("조간 모니터링 오류:", e.message); }
     try { await maybeLocalEdition(); } catch (e) { console.error("부산 지면 오류:", e.message); }
+    try { await maybeEvening(); } catch (e) { console.error("석간 모니터링 오류:", e.message); }
     try { await maybeAgendaReview(); } catch (e) { console.error("시책 점검 오류:", e.message); }
     try { await maybeRiskBackfill(); } catch (e) { console.error("리스크 소급 오류:", e.message); }
     try { await maybeInterviewBackfill(); } catch (e) { console.error("인터뷰 소급 오류:", e.message); }
