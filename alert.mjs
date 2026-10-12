@@ -1204,13 +1204,13 @@ async function maybeAgendaReview(force = false) {
 }
 
 // ---- 석간 신문 모니터링(2026-10-12): 문화일보·내일신문 1면·사설 → 「조간/석간 신문」 방(키 "조간신문" 그대로) ----
-// 14:30 KST부터 10분 간격. 두 매체 모두(1면+사설) 갖춰지면 발송, 17:30이 넘으면 있는 만큼(빠진 매체 표기). 전 매체 0건(토·일·연휴)은 건너뜀.
+// 13:00 KST부터 10분 간격(처음엔 14:30이었으나 10/12 실측 14:07에 이미 완결). 두 매체 모두(1면+사설) 갖춰지면 발송, 17:30이 넘으면 있는 만큼(빠진 매체 표기). 전 매체 0건(토·일·연휴)은 건너뜀.
 let eveningLast = 0;
 async function maybeEvening() {
   const kst = new Date(Date.now() + 9 * 3600e3);
   const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
   const today = kstDate(0);
-  if (mins < 14 * 60 + 30 || mins >= 18 * 60 + 30 || kst.getUTCDay() === 0 || kst.getUTCDay() === 6) return;
+  if (mins < 13 * 60 || mins >= 18 * 60 + 30 || kst.getUTCDay() === 0 || kst.getUTCDay() === 6) return;   // 10/12 실측: 14:07에 두 매체 모두 올라와 있었음 → 13:00부터 확인
   if (state.eveningFor === today || Date.now() - eveningLast < 10 * 60e3) return;
   eveningLast = Date.now();
   const { text, results, published } = await buildEvening(today.replace(/-/g, ""));
