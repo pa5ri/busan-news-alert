@@ -330,11 +330,15 @@ const CENTRAL_TARGET = /정부|대통령|이재명|李|해수부|해양수산부
 const RISK_ETHICS = /성비위|성추행|성희롱|성폭력|갑질|음주운전|막말|폭행|제명|탈당\s?권고|당원권\s?정지|윤리위|윤리특위|공천\s?개입|돈봉투|정치자금법/;
 const DP_MARK = /더불어민주당|민주당/;
 const DP_BUSAN_ORG = /(더불어민주당|민주당)\s?부산\s?시당/;
+const DP_SPEAKS = /(더불어민주당|민주당)\s?(부산\s?)?시당(\s?(은|이|도|측))?[,\s]{0,2}(["“'‘]|논평|성명|규탄|비판|촉구|지적|요구|반박|공세|직격|질타|주장)/;
 const BUSAN_COUNCILOR = /부산\s?시의원|부산시의회\s?[가-힣]{0,6}\s?의원/;
 const LOCAL_ROLE = /(?<![가-힣])시의원|시·구의원|구의원|지역위원장/;
 function politicsRisk(t, ctx) {
   if (!(RISK_LEGAL.test(t) || RISK_ETHICS.test(t))) return false;
   if (OPPOSITION.test(t) && CRIT_ATTACK.test(t) && DP_MARK.test(t)) return false;   // 민주당이 야권을 공격하는 구도
+  // 민주당 시당이 화자(조직명 뒤 따옴표·논평·성명…)이고 제목에 야권이 있으면 시당의 공세 활동이지 우리 리스크가 아니다 — 시당 방으로(10/13 실측:
+  // 「민주당 부산시당 "국힘 시당, 리베이트 의혹 홍보 책임자 재임명 부적절…"」이 '부적절·밝히라'가 공격어 목록에 없어 리스크로 감).
+  if (DP_SPEAKS.test(t) && OPPOSITION.test(t)) return false;
   if (DP_BUSAN_ORG.test(t)) return true;
   if (BUSAN_COUNCILOR.test(t)) return true;
   if (DP_MARK.test(t) && LOCAL_ROLE.test(t) && /부산/.test(t + " " + ctx)) return true;
