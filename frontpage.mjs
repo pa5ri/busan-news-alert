@@ -110,7 +110,7 @@ export async function buildEditionMessages(code, name, ymd, mentionKeys = new Se
     cur += "\n\n" + sec;
   }
   msgs.push(cur);
-  return { msgs, pages: blocks.length, total, mentions: picked.length };
+  return { msgs, pages: blocks.length, total, mentions: picked.length, picked };
 }
 
 // ---- 석간 신문 모니터링 (2026-10-12): 문화일보·내일신문의 1면 머리기사·사설, 조간과 같은 양식으로 「조간/석간 신문」 방에 ----
@@ -165,4 +165,16 @@ export async function buildEvening(ymd) {
   };
   const text = [`📰 <b>${ymd.slice(0, 4)}년 ${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) 석간 신문 모니터링</b>`, ...results.map(section)].join("\n\n");
   return { text, results, published: results.filter(r => r.top).length };
+}
+
+// 전재수 언급 합본(2026-10-14): 매체별 지면 메시지는 그대로 두고, 두 매체의 ★ 언급 기사만 한 장으로 더 보낸다(사용자 요청).
+// byPaper: { 매체명: [{page,title,url}] }
+export function buildMentionDigest(ymd, byPaper) {
+  const d = new Date(`${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}T12:00:00+09:00`);
+  const dow = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
+  const names = Object.keys(byPaper);
+  const total = names.reduce((n, k) => n + byPaper[k].length, 0);
+  const head = `★ <b>${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) 전재수 언급 지면 기사</b> — ${names.map(k => `${k} ${byPaper[k].length}건`).join(" · ")}`;
+  const parts = names.map(k => [`<b>[ ${k} ]</b>`, ...(byPaper[k].length ? byPaper[k].map(a => `★ [${a.page}] <a href="${a.url}">${esc(a.title)}</a>`) : ["· 언급 없음"])].join("\n"));
+  return { text: [head, ...parts].join("\n\n"), total };
 }

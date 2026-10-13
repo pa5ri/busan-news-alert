@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS, buildEvening } from "./frontpage.mjs";
+import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS, buildEvening, buildMentionDigest } from "./frontpage.mjs";
 import { isInterviewBody, interviewCheck, RE_MAYOR_QUOTE } from "./interview.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, riskNews, agendaTerms, agendaAdd, agendaRemove, agendaHit, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
@@ -482,6 +482,8 @@ function saveState() {
     frontFor: state.frontFor || "",
     eveningFor: state.eveningFor || "",
     editionFor: state.editionFor || {},
+    editionMentions: state.editionMentions || {},
+    mentionDigestFor: state.mentionDigestFor || "",
     agendaReviewFor: state.agendaReviewFor || "",
     riskInit: !!state.riskInit,
     riskVer: state.riskVer || 0,
@@ -1262,7 +1264,20 @@ async function maybeLocalEdition() {
     for (const m of r.msgs) { if (!await tgSend({ ...dest, text: m, parse_mode: "HTML", disable_web_page_preview: true }, "부산지면")) { ok = false; break; } }
     if (!ok) { console.error(`부산 지면(${p.name}) 전송 실패 — 다음 확인 때 재시도`); continue; }
     state.editionFor[p.name] = today;
+    state.editionMentions = { [today]: { ...((state.editionMentions || {})[today] || {}), [p.name]: r.picked || [] } };   // 오늘 것만 보관
     console.log(`📰 부산 지면 발송: ${p.name} ${r.pages}면 ${r.total}건(${r.msgs.length}장), 전재수 언급 ${r.mentions}건`);
+    saveState();
+  }
+  // 두 매체가 다 나간 뒤 전재수 언급 합본 1장(2026-10-14). 둘 다 0건이면 보내지 않는다.
+  if (LOCAL_PAPERS.every(p => state.editionFor[p.name] === today) && state.mentionDigestFor !== today) {
+    state.mentionDigestFor = today;
+    const byPaper = {}; for (const p of LOCAL_PAPERS) byPaper[p.name] = ((state.editionMentions || {})[today] || {})[p.name] || [];
+    const { text, total } = buildMentionDigest(today.replace(/-/g, ""), byPaper);
+    if (total) {
+      const dest = (TOPIC_GROUP && TOPICS["부산지면"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["부산지면"] } : { chat_id: CHAT_IDS[0] };
+      await tgSend({ ...dest, text: text.slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "부산지면합본");
+      console.log(`★ 전재수 언급 합본 발송: ${total}건`);
+    } else console.log("  전재수 언급 합본: 0건이라 생략");
     saveState();
   }
 }
