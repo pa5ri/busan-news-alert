@@ -1239,24 +1239,17 @@ async function maybeNationalMentions() {
   const today = kstDate(0);
   if (kst.getUTCDay() === 0) return;
   let slot = null;
-  const busanDone = LOCAL_PAPERS.every(p => (state.editionFor || {})[p.name] === today);
-  if (mins >= 9 * 60 && mins < 11 * 60 && state.natMentionFor !== today && (busanDone || mins >= 10 * 60 + 30)) slot = { key: "natMentionFor", papers: NATIONAL_PAPERS, label: "전재수 언급 지면 기사", morning: true };
+  if (mins >= 9 * 60 && mins < 11 * 60 && state.natMentionFor !== today) slot = { key: "natMentionFor", papers: NATIONAL_PAPERS, label: "전국 조간 지면 전재수 언급" };
   else if (mins >= 15 * 60 + 30 && mins < 17 * 60 + 30 && state.natMentionEveFor !== today && kst.getUTCDay() !== 6) slot = { key: "natMentionEveFor", papers: EVENING_NATIONAL, label: "석간 지면 전재수 언급" };
   if (!slot) return;
   state[slot.key] = today;
   const ymd = today.replace(/-/g, "");
   const nat = await scanMentions(slot.papers, ymd, jeonArticleKeys([kstDate(0), kstDate(-1), kstDate(-2)]));
-  let { byPaper, total, withEdition, failed } = nat; let summary = ""; let pending = [];
-  if (slot.morning) {   // 부산일보·국제신문을 앞에(0건이어도 표시) + 전국 지면 뒤에
-    const bus = {}; let bn = 0;
-    for (const p of LOCAL_PAPERS) { const l = ((state.editionMentions || {})[today] || {})[p.name] || []; bus[p.name] = l; bn += l.length; if ((state.editionFor || {})[p.name] !== today) pending.push(p.name); }
-    byPaper = { ...bus, ...nat.byPaper }; total = bn + nat.total;
-    summary = `${LOCAL_PAPERS.map(p => `${p.name} ${bus[p.name].length}건`).join(" · ")} · 전국 ${Object.keys(nat.byPaper).length}개지 ${nat.total}건`;
-  }
+  const { byPaper, total, withEdition, failed } = nat;
   console.log(`★ ${slot.label}: ${total}건 (지면 있는 매체 ${withEdition}/${slot.papers.length}${failed.length ? ", 조회 실패 " + failed.join("·") : ""})`);
   if (total) {
-    const { text } = buildMentionDigest(ymd, byPaper, slot.label, summary);
-    const note = (failed.length ? `\n\n⚠ 조회 실패: ${failed.map(esc).join(", ")}` : "") + (pending.length ? `\n\n⚠ 지면 미확인(발송 시점까지 미게재): ${pending.map(esc).join(", ")}` : "");
+    const { text } = buildMentionDigest(ymd, byPaper, slot.label);
+    const note = failed.length ? `\n\n⚠ 조회 실패: ${failed.map(esc).join(", ")}` : "";
     const dest = (TOPIC_GROUP && TOPICS["부산지면"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["부산지면"] } : { chat_id: CHAT_IDS[0] };
     await tgSend({ ...dest, text: (text + note).slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "전국지면합본");
   }
@@ -1302,7 +1295,18 @@ async function maybeLocalEdition() {
     console.log(`📰 부산 지면 발송: ${p.name} ${r.pages}면 ${r.total}건(${r.msgs.length}장), 전재수 언급 ${r.mentions}건`);
     saveState();
   }
-  // (전재수 언급 합본은 maybeNationalMentions에서 부산 2개지 + 전국 지면을 합쳐 1장으로 보낸다 — 2026-10-15)
+  // 두 매체가 다 나간 뒤 전재수 언급 합본 1장(2026-10-14). 둘 다 0건이면 보내지 않는다.
+  if (LOCAL_PAPERS.every(p => state.editionFor[p.name] === today) && state.mentionDigestFor !== today) {
+    state.mentionDigestFor = today;
+    const byPaper = {}; for (const p of LOCAL_PAPERS) byPaper[p.name] = ((state.editionMentions || {})[today] || {})[p.name] || [];
+    const { text, total } = buildMentionDigest(today.replace(/-/g, ""), byPaper);
+    if (total) {
+      const dest = (TOPIC_GROUP && TOPICS["부산지면"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["부산지면"] } : { chat_id: CHAT_IDS[0] };
+      await tgSend({ ...dest, text: text.slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "부산지면합본");
+      console.log(`★ 전재수 언급 합본 발송: ${total}건`);
+    } else console.log("  전재수 언급 합본: 0건이라 생략");
+    saveState();
+  }
 }
 
 // ---- 아침 8시 조간 신문 모니터링: 중앙 6개지 + 부산 2개지의 1면 머리기사·사설 제목 (2026-09-29) ----
