@@ -6,7 +6,7 @@ import { loadDays, topIssues, formatRanking, articlesForLabel, topStories, forma
 import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticles, sparkline } from "./issues.mjs";
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
-import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS, buildEvening, buildMentionDigest } from "./frontpage.mjs";
+import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS, buildEvening, buildMentionDigest, NATIONAL_PAPERS, EVENING_NATIONAL, scanMentions } from "./frontpage.mjs";
 import { isInterviewBody, interviewCheck, RE_MAYOR_QUOTE } from "./interview.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, riskNews, agendaTerms, agendaAdd, agendaRemove, agendaHit, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
@@ -484,6 +484,8 @@ function saveState() {
     editionFor: state.editionFor || {},
     editionMentions: state.editionMentions || {},
     mentionDigestFor: state.mentionDigestFor || "",
+    natMentionFor: state.natMentionFor || "",
+    natMentionEveFor: state.natMentionEveFor || "",
     agendaReviewFor: state.agendaReviewFor || "",
     riskInit: !!state.riskInit,
     riskVer: state.riskVer || 0,
@@ -1229,6 +1231,30 @@ async function maybeEvening() {
   saveState();
 }
 
+// ---- 전국 지면 전재수 언급 합본(2026-10-15): 조간 09:00~11:00(지면보기 있는 26개지 중 부산 2개지 제외), 석간 15:30~17:30(문화일보) ----
+// 각각 하루 1회. 0건이면 보내지 않는다. 조회 실패 매체는 머리에 표기.
+async function maybeNationalMentions() {
+  const kst = new Date(Date.now() + 9 * 3600e3);
+  const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  const today = kstDate(0);
+  if (kst.getUTCDay() === 0) return;
+  let slot = null;
+  if (mins >= 9 * 60 && mins < 11 * 60 && state.natMentionFor !== today) slot = { key: "natMentionFor", papers: NATIONAL_PAPERS, label: "전국 조간 지면" };
+  else if (mins >= 15 * 60 + 30 && mins < 17 * 60 + 30 && state.natMentionEveFor !== today && kst.getUTCDay() !== 6) slot = { key: "natMentionEveFor", papers: EVENING_NATIONAL, label: "석간 지면" };
+  if (!slot) return;
+  state[slot.key] = today;
+  const ymd = today.replace(/-/g, "");
+  const { byPaper, total, withEdition, failed } = await scanMentions(slot.papers, ymd, jeonArticleKeys([kstDate(0), kstDate(-1), kstDate(-2)]));
+  console.log(`★ ${slot.label} 전재수 언급: ${total}건 (지면 있는 매체 ${withEdition}/${slot.papers.length}${failed.length ? ", 조회 실패 " + failed.join("·") : ""})`);
+  if (total) {
+    const { text } = buildMentionDigest(ymd, byPaper, `${slot.label} 전재수 언급`);
+    const note = failed.length ? `\n\n⚠ 조회 실패: ${failed.map(esc).join(", ")}` : "";
+    const dest = (TOPIC_GROUP && TOPICS["부산지면"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["부산지면"] } : { chat_id: CHAT_IDS[0] };
+    await tgSend({ ...dest, text: (text + note).slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "전국지면합본");
+  }
+  saveState();
+}
+
 // ---- 아침 부산 지면 전체(2026-10-01): 부산일보·국제신문 그날 지면을 면별 전체 목록으로 「부산 지면」 방에 ----
 // 06:00 KST부터 10분 간격으로 매체별 확인 — 올라온 매체부터 바로 보낸다(확인되는 대로, 사용자 요청). 12:00까지.
 // 휴간일(일요일 등)은 지면이 없어 자연히 안 나간다. state.editionFor = { 부산일보: "YYYY-MM-DD", 국제신문: ... }
@@ -1473,6 +1499,7 @@ if (intervalSec > 0 && durationMin > 0) {
     try { await maybeFrontpage(); } catch (e) { console.error("조간 모니터링 오류:", e.message); }
     try { await maybeLocalEdition(); } catch (e) { console.error("부산 지면 오류:", e.message); }
     try { await maybeEvening(); } catch (e) { console.error("석간 모니터링 오류:", e.message); }
+    try { await maybeNationalMentions(); } catch (e) { console.error("전국 지면 언급 오류:", e.message); }
     try { await maybeAgendaReview(); } catch (e) { console.error("시책 점검 오류:", e.message); }
     try { await maybeRiskBackfill(); } catch (e) { console.error("리스크 소급 오류:", e.message); }
     try { await maybeInterviewBackfill(); } catch (e) { console.error("인터뷰 소급 오류:", e.message); }

@@ -169,12 +169,37 @@ export async function buildEvening(ymd) {
 
 // 전재수 언급 합본(2026-10-14): 매체별 지면 메시지는 그대로 두고, 두 매체의 ★ 언급 기사만 한 장으로 더 보낸다(사용자 요청).
 // byPaper: { 매체명: [{page,title,url}] }
-export function buildMentionDigest(ymd, byPaper) {
+export function buildMentionDigest(ymd, byPaper, label = "전재수 언급 지면 기사") {
   const d = new Date(`${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}T12:00:00+09:00`);
   const dow = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
   const names = Object.keys(byPaper);
   const total = names.reduce((n, k) => n + byPaper[k].length, 0);
-  const head = `★ <b>${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) 전재수 언급 지면 기사</b> — ${names.map(k => `${k} ${byPaper[k].length}건`).join(" · ")}`;
+  const head = `★ <b>${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) ${label}</b> — ${names.map(k => `${k} ${byPaper[k].length}건`).join(" · ")}`;
   const parts = names.map(k => [`<b>[ ${k} ]</b>`, ...(byPaper[k].length ? byPaper[k].map(a => `★ [${a.page}] <a href="${a.url}">${esc(a.title)}</a>`) : ["· 언급 없음"])].join("\n"));
   return { text: [head, ...parts].join("\n\n"), total };
+}
+
+// ---- 전국 지면 전재수 언급(2026-10-15): 네이버 지면보기가 있는 매체 전부를 훑어 전재수 언급 기사만 합본 ----
+// 10/14 실측: 지면보기 있는 26개지 중 부산 2개지 외 8개지에서 9건(서울신문·문화일보·매경·한경·머투·파이낸셜·이데일리·경기일보).
+// 내일신문·중도일보 등 지면보기 없는 매체는 대상 밖. 판정은 제목에 이름 또는 전재수 색인(네이버 기사 번호) 대조 — 부산 지면과 같은 기준.
+export const NATIONAL_PAPERS = [
+  ["023", "조선일보"], ["025", "중앙일보"], ["020", "동아일보"], ["028", "한겨레"], ["032", "경향신문"], ["469", "한국일보"], ["081", "서울신문"], ["022", "세계일보"], ["005", "국민일보"],
+  ["009", "매일경제"], ["015", "한국경제"], ["011", "서울경제"], ["016", "헤럴드경제"], ["277", "아시아경제"], ["008", "머니투데이"], ["014", "파이낸셜뉴스"], ["030", "전자신문"], ["029", "디지털타임스"], ["018", "이데일리"],
+  ["088", "매일신문"], ["087", "강원일보"], ["310", "경인일보"], ["657", "대전일보"], ["666", "경기일보"], ["665", "충청투데이"], ["654", "강원도민일보"],
+].map(([code, name]) => ({ code, name }));
+export const EVENING_NATIONAL = [{ code: "021", name: "문화일보" }];   // 석간은 오후에 따로
+
+/** 여러 매체의 지면에서 전재수 언급만 모은다 → { byPaper(언급 있는 매체만), total, withEdition, failed } */
+export async function scanMentions(papers, ymd, mentionKeys) {
+  const keyOf = url => (String(url).match(/article\/(\d+\/\d+)/) || [])[1] || "";
+  const byPaper = {}; let total = 0, withEdition = 0; const failed = [];
+  for (const p of papers) {
+    let blocks = null;
+    for (let i = 0; i < 2 && !blocks; i++) { try { blocks = await fetchEdition(p.code, ymd); } catch { await new Promise(r => setTimeout(r, 2000)); } }
+    if (!blocks) { failed.push(p.name); continue; }
+    if (blocks.length) withEdition++;
+    const hits = blocks.flatMap(b => b.arts.filter(a => /전재수/.test(a.title) || mentionKeys.has(keyOf(a.url))).map(a => ({ page: b.page, ...a })));
+    if (hits.length) { byPaper[p.name] = hits; total += hits.length; }
+  }
+  return { byPaper, total, withEdition, failed };
 }
