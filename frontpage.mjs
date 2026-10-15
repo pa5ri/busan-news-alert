@@ -169,12 +169,12 @@ export async function buildEvening(ymd) {
 
 // 전재수 언급 합본(2026-10-14): 매체별 지면 메시지는 그대로 두고, 두 매체의 ★ 언급 기사만 한 장으로 더 보낸다(사용자 요청).
 // byPaper: { 매체명: [{page,title,url}] }
-export function buildMentionDigest(ymd, byPaper, label = "전재수 언급 지면 기사") {
+export function buildMentionDigest(ymd, byPaper, label = "전재수 언급 지면 기사", summary = "") {
   const d = new Date(`${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}T12:00:00+09:00`);
   const dow = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
   const names = Object.keys(byPaper);
   const total = names.reduce((n, k) => n + byPaper[k].length, 0);
-  const head = `★ <b>${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) ${label}</b> — ${names.map(k => `${k} ${byPaper[k].length}건`).join(" · ")}`;
+  const head = `★ <b>${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) ${label}</b> — ${summary || names.map(k => `${k} ${byPaper[k].length}건`).join(" · ")}`;
   const parts = names.map(k => [`<b>[ ${k} ]</b>`, ...(byPaper[k].length ? byPaper[k].map(a => `★ [${a.page}] <a href="${a.url}">${esc(a.title)}</a>`) : ["· 언급 없음"])].join("\n"));
   return { text: [head, ...parts].join("\n\n"), total };
 }
