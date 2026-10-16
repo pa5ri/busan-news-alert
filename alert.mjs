@@ -1279,7 +1279,8 @@ async function maybeLocalEdition() {
   const today = kstDate(0);
   if (mins < 6 * 60 || mins >= 12 * 60 || kst.getUTCDay() === 0) return;
   state.editionFor = state.editionFor || {};
-  if (LOCAL_PAPERS.every(p => state.editionFor[p.name] === today) || Date.now() - editionLast < 10 * 60e3) return;
+  const allOut = LOCAL_PAPERS.every(p => state.editionFor[p.name] === today);
+  if ((allOut && state.mentionDigestFor === today) || (!allOut && Date.now() - editionLast < 10 * 60e3)) return;   // 둘 다 나갔어도 합본이 안 나갔으면 내려간다(2026-10-16)
   editionLast = Date.now();
   for (const p of LOCAL_PAPERS) {
     if (state.editionFor[p.name] === today) continue;
