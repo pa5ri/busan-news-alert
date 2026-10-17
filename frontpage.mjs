@@ -9,7 +9,7 @@ export const PAPERS = [
   { code: "082", name: "부산일보", local: true }, { code: "658", name: "국제신문", local: true },
 ];
 
-const unesc = s => String(s).replace(/<[^>]+>/g, "").replace(/&quot;|&#034;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+const unesc = s => String(s).replace(/<[^>]+>/g, "").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&quot;|&#034;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<")
   .replace(/&gt;/g, ">").replace(/&apos;|&#39;|&#039;/g, "'").replace(/\s+/g, " ").trim();
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const RE_ED = /^\s*[\[<〈(【]?\s*사설\s*[\]>〉)】]?\s*|\s*[\[<〈(【]\s*사설\s*[\]>〉)】]?\s*$/;   // 앞 말머리 또는 뒤 꼬리표(문화일보 「…[사설]」, 10/12)
@@ -34,6 +34,53 @@ export async function fetchEdition(code, ymd) {
   }).filter(b => b.arts.length);
 }
 
+
+// ---- 중앙일보 토요일 보강(2026-10-17): 네이버 지면보기엔 중앙일보 토요일판이 없다(10/10·10/17 실측). 다른 모니터링 봇이 보여주는
+// '중앙일보 토요일 1면·사설'은 중앙SUNDAY(토요일 웹 공개, N호 01면)와 중앙일보 주말 사설(자사 사설 목록)의 조합. 네이버가 비면 자사 사이트로 받는다.
+async function jaGet(url, ms = 15000) {
+  const ac = new AbortController(); const to = setTimeout(() => ac.abort(), ms);
+  try { const r = await fetch(url, { headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" }, signal: ac.signal }); if (!r.ok) throw new Error("HTTP " + r.status); return await r.text(); }
+  finally { clearTimeout(to); }
+}
+export async function fetchJoongangWeekend(ymd) {
+  const dot = `${ymd.slice(0, 4)}.${ymd.slice(4, 6)}.${ymd.slice(6, 8)}`;
+  // ① 사설: 자사 사설 목록에서 그날 날짜 항목만
+  const list = await jaGet("https://www.joongang.co.kr/opinion/editorial");
+  const editorials = []; const seenT = new Set();
+  for (const m of list.matchAll(/<li class="card"[\s\S]*?<\/li>/g)) {
+    const b = m[0]; if (!b.includes(dot)) continue;
+    const a = b.match(/<h2 class="headline">\s*<a href="(https:\/\/www\.joongang\.co\.kr\/article\/\d+)"[^>]*>([\s\S]*?)<\/a>/);
+    if (!a) continue;
+    const title = unesc(a[2]).replace(RE_ED, "").trim();
+    if (title && !seenT.has(title)) { seenT.add(title); editorials.push({ url: a[1], title }); }
+  }
+  // ② 1면: 최신 기사 사이트맵의 기사마다 '지면 정보'(epaper_layer)를 읽어 'N호 01면'(중앙SUNDAY) 또는 '종합 1면'을 모은다
+  const sm = await jaGet("https://www.joongang.co.kr/sitemap/latest-articles");
+  const urls = [...sm.matchAll(/<loc>(https:\/\/www\.joongang\.co\.kr\/article\/\d+)<\/loc>/g)].map(x => x[1]).slice(0, 200);
+  const tagged = []; let i = 0;
+  await Promise.all(Array.from({ length: 8 }, async () => {
+    while (i < urls.length) {
+      const u = urls[i++];
+      try {
+        const h = await jaGet(u, 12000);
+        const page = unesc((h.match(/id="epaper_layer"[\s\S]{0,300}?<p>([^<]+)<\/p>/) || [])[1] || "");
+        const title = unesc((h.match(/<meta property="og:title" content="([^"]+)"/) || [])[1] || "").replace(/\s*\|\s*중앙일보$/, "");
+        if (page && title) tagged.push({ url: u, title, page, order: urls.indexOf(u) });
+      } catch { /* 기사 1건 실패는 무시 */ }
+    }
+  }));
+  tagged.sort((a, b) => a.order - b.order);
+  let note = "";
+  let front = tagged.filter(t => /^종합\s*0?1면$/.test(t.page));                   // 일간지 1면이 있으면 우선
+  if (!front.length) {
+    const issues = tagged.map(t => (t.page.match(/^(\d+)호\s*0?1면$/) || [])[1]).filter(Boolean).map(Number);
+    if (issues.length) { const cur = Math.max(...issues); front = tagged.filter(t => t.page.replace(/\s/g, "") === `${cur}호01면`); note = `중앙SUNDAY ${cur}호 1면`; }
+  }
+  front = front.filter(a => !/^\[(사진|알림|사고|공고|바로잡습니다)\]/.test(a.title) && !RE_ED.test(a.title));
+  if (!front.length && !editorials.length) return null;
+  return { pages: tagged.length ? 1 : 0, top: front[0] || null, front: front.slice(1, 4), editorials, note };
+}
+
 export async function fetchPaper(code, ymd) {
   const blocks = await fetchEdition(code, ymd);
   // 1면: 면 표기가 A1면·1면·01면 등 — 숫자가 1인 첫 블록. 못 찾으면 맨 앞 블록.
@@ -43,6 +90,7 @@ export async function fetchPaper(code, ymd) {
   const editorials = blocks.flatMap(b => b.arts).filter(a => RE_ED.test(a.title))
     .map(a => ({ ...a, title: a.title.replace(RE_ED, "").trim() }))
     .filter(a => a.title && !seen.has(a.title) && seen.add(a.title));
+  if (!blocks.length && code === "025") { const w = await fetchJoongangWeekend(ymd); if (w) return w; }   // 토요일: 네이버에 중앙일보 지면 없음 → 자사(중앙SUNDAY 1면 + 주말 사설)
   return { pages: blocks.length, top: front[0] || null, front: front.slice(1, 4), editorials };
 }
 
@@ -62,8 +110,8 @@ export async function buildFrontpage(ymd) {
   const section = r => {
     const L = [`<b>[ ${r.name} ]</b>`];
     if (!r.top) { L.push(r.err ? `- 수집 실패(${esc(r.err)})` : "- 오늘 자 지면 없음"); return L.join("\n"); }
-    L.push(`- 1면 : <a href="${r.top.url}">${esc(r.top.title)}</a>`);
-    if (r.local) for (const a of r.front.slice(0, 2)) L.push(`- 1면 : <a href="${a.url}">${esc(a.title)}</a>`);   // 부산 지역지는 1면 주요 기사 2건 더
+    L.push(`- 1면 : <a href="${r.top.url}">${esc(r.top.title)}</a>${r.note ? ` <i>(${esc(r.note)})</i>` : ""}`);
+    if (r.local || r.note) for (const a of r.front.slice(0, 2)) L.push(`- 1면 : <a href="${a.url}">${esc(a.title)}</a>`);   // 부산 지역지·중앙SUNDAY(머리기사 순서 불명)는 1면 주요 기사 2건 더
     if (!r.editorials.length) L.push("- 사설 : (지면 목록에 없음)");
     r.editorials.slice(0, 5).forEach((a, i) => L.push(`- 사설 ${r.editorials.length > 1 ? CIRC[i] + " " : ""}: <a href="${a.url}">${esc(a.title)}</a>`));
     return L.join("\n");

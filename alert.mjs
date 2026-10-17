@@ -1329,7 +1329,7 @@ async function maybeFrontpage() {
   frontLast = Date.now();
   const { text, results, published } = await buildFrontpage(today.replace(/-/g, ""));
   const saturday = kst.getUTCDay() === 6;
-  const NO_SAT = new Set(["중앙일보", "한겨레", "경향신문", "부산일보", "국제신문"]);   // 토요일판이 네이버 지면보기에 없는 매체(2026-10-17 실측)
+  const NO_SAT = new Set(["한겨레", "경향신문", "부산일보", "국제신문"]);   // 토요일판이 네이버 지면보기에 없는 매체(2026-10-17 실측). 중앙일보는 자사 보강(fetchJoongangWeekend)으로 받는다
   const absentAll = results.filter(r => !(r.top && r.editorials.length)).map(r => r.name);
   const noSat = saturday ? absentAll.filter(n => NO_SAT.has(n)) : [];
   const missing = absentAll.filter(n => !noSat.includes(n));   // 토요일엔 토요일판 없는 매체를 기다리지 않는다
