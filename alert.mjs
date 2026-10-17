@@ -1305,7 +1305,12 @@ async function maybeLocalEdition() {
       const dest = (TOPIC_GROUP && TOPICS["부산지면"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["부산지면"] } : { chat_id: CHAT_IDS[0] };
       await tgSend({ ...dest, text: text.slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "부산지면합본");
       console.log(`★ 전재수 언급 합본 발송: ${total}건`);
-    } else console.log("  전재수 언급 합본: 0건이라 생략");
+    } else {
+      const dest = (TOPIC_GROUP && TOPICS["부산지면"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["부산지면"] } : { chat_id: CHAT_IDS[0] };
+      const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(today + "T12:00:00+09:00").getDay()];
+      await tgSend({ ...dest, text: `★ <b>${today.slice(5, 7)}월 ${today.slice(8, 10)}일(${dow}) 전재수 언급 지면 기사</b> — 부산일보·국제신문 오늘 자 언급 없음`, parse_mode: "HTML", disable_web_page_preview: true }, "부산지면합본");
+      console.log("  전재수 언급 합본: 0건 — '언급 없음' 한 줄 발송");
+    }
     saveState();
   }
 }
@@ -1323,7 +1328,11 @@ async function maybeFrontpage() {
   if (state.frontFor === today || Date.now() - frontLast < 10 * 60e3) return;
   frontLast = Date.now();
   const { text, results, published } = await buildFrontpage(today.replace(/-/g, ""));
-  const missing = results.filter(r => !(r.top && r.editorials.length)).map(r => r.name);
+  const saturday = kst.getUTCDay() === 6;
+  const NO_SAT = new Set(["중앙일보", "한겨레", "경향신문", "부산일보", "국제신문"]);   // 토요일판이 네이버 지면보기에 없는 매체(2026-10-17 실측)
+  const absentAll = results.filter(r => !(r.top && r.editorials.length)).map(r => r.name);
+  const noSat = saturday ? absentAll.filter(n => NO_SAT.has(n)) : [];
+  const missing = absentAll.filter(n => !noSat.includes(n));   // 토요일엔 토요일판 없는 매체를 기다리지 않는다
   const deadline = mins >= 11 * 60;
   const sunday = kst.getUTCDay() === 0;
   if (!published && (sunday || deadline)) { state.frontFor = today; console.log("  조간: 오늘 자 지면 없음(휴간일) — 건너뜀"); saveState(); return; }
@@ -1331,7 +1340,7 @@ async function maybeFrontpage() {
   state.frontFor = today;
   // 4096자 제한 대비: 중앙지 / 부산 지역지 두 장으로
   const [a, b] = text.split("━━ 부산 지역지 ━━");
-  const note = missing.length ? `\n\n⚠ 11시까지 지면이 다 올라오지 않은 매체: ${missing.join(", ")}` : "";
+  const note = (missing.length ? `\n\n⚠ 11시까지 지면이 다 올라오지 않은 매체: ${missing.join(", ")}` : "") + (noSat.length ? `\n\nℹ 토요일판 없음(네이버 지면보기 기준): ${noSat.join(", ")}` : "");
   for (const part of [a.trim() + note, b ? "📰 <b>부산 지역지 1면·사설</b>" + b : ""].filter(Boolean)) {
     const dest = (TOPIC_GROUP && TOPICS["조간신문"]) ? { chat_id: TOPIC_GROUP, message_thread_id: TOPICS["조간신문"] } : { chat_id: CHAT_IDS[0] };
     await tgSend({ ...dest, text: part.slice(0, 4090), parse_mode: "HTML", disable_web_page_preview: true }, "조간신문");
