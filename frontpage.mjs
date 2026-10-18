@@ -27,9 +27,9 @@ export async function fetchEdition(code, ymd) {
   } finally { clearTimeout(to); }
   return html.split(/<div class="newspaper_inner"/).slice(1).map(b => {
     const page = unesc((b.match(/page_notation[^>]*>([\s\S]*?)<\/span>/) || [])[1] || "");
-    const arts = [...b.matchAll(/<a[^>]*href="(https:\/\/n\.news\.naver\.com\/article\/newspaper\/\d+\/\d+)\?date=(\d{8})[^"]*"[\s\S]*?<strong>([\s\S]*?)<\/strong>/g)]
-      .filter(m => m[2] === ymd)
-      .map(m => ({ url: m[1].replace("/article/newspaper/", "/article/"), title: unesc(m[3]) })).filter(a => a.title);
+    const arts = [...b.matchAll(/<a([^>]*)href="(https:\/\/n\.news\.naver\.com\/article\/newspaper\/\d+\/\d+)\?date=(\d{8})[^"]*"[\s\S]*?<strong>([\s\S]*?)<\/strong>/g)]
+      .filter(m => m[3] === ymd)
+      .map(m => ({ url: m[2].replace("/article/newspaper/", "/article/"), title: unesc(m[4]), img: !/title_only/.test(m[1]) })).filter(a => a.title);   // img: 썸네일 기사 = 네이버가 둔 머리기사(10/15~17 8개지 실측: 1면에 정확히 1건)
     return { page, arts };
   }).filter(b => b.arts.length);
 }
@@ -85,7 +85,9 @@ export async function fetchPaper(code, ymd) {
   const blocks = await fetchEdition(code, ymd);
   // 1면: 면 표기가 A1면·1면·01면 등 — 숫자가 1인 첫 블록. 못 찾으면 맨 앞 블록.
   const first = blocks.find(b => /^[A-Z]?0?1면$/.test(b.page.replace(/\s/g, ""))) || blocks[0];
-  const front = first ? first.arts.filter(a => !RE_ED.test(a.title) && !/^\[(알림|사고|공고|바로잡습니다)\]/.test(a.title)) : [];
+  let front = first ? first.arts.filter(a => !RE_ED.test(a.title) && !/^\[(알림|사고|공고|바로잡습니다)\]/.test(a.title)) : [];
+  const lead = front.find(a => a.img);   // 머리기사 = 이미지 기사(10/18). 네이버가 낮에 순서를 재편집해도 이미지 기사를 집는다. 없으면 첫 기사
+  if (lead) front = [lead, ...front.filter(a => a !== lead)];
   const seen = new Set();
   const editorials = blocks.flatMap(b => b.arts).filter(a => RE_ED.test(a.title))
     .map(a => ({ ...a, title: a.title.replace(RE_ED, "").trim() }))
