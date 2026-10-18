@@ -65,11 +65,12 @@ export async function fetchJoongangWeekend(ymd) {
         const h = await jaGet(u, 12000);
         const page = unesc((h.match(/id="epaper_layer"[\s\S]{0,300}?<p>([^<]+)<\/p>/) || [])[1] || "");
         const title = unesc((h.match(/<meta property="og:title" content="([^"]+)"/) || [])[1] || "").replace(/\s*\|\s*중앙일보$/, "");
-        if (page && title) tagged.push({ url: u, title, page, order: urls.indexOf(u) });
+        const pub = (h.match(/article:published_time" content="([^"]+)"/) || [])[1] || "9999";
+        if (page && title) tagged.push({ url: u, title, page, pub, order: urls.indexOf(u) });
       } catch { /* 기사 1건 실패는 무시 */ }
     }
   }));
-  tagged.sort((a, b) => a.order - b.order);
+  tagged.sort((a, b) => a.pub.localeCompare(b.pub) || a.order - b.order);   // 게재 시각 순: 1015호 1면 실측(10/17) 머리기사 00:01 → 나머지 01:14… 먼저 올린 기사가 머리기사
   let note = "";
   let front = tagged.filter(t => /^종합\s*0?1면$/.test(t.page));                   // 일간지 1면이 있으면 우선
   if (!front.length) {
