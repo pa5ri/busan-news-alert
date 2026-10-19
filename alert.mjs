@@ -8,6 +8,7 @@ import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
 import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS, buildEvening, buildMentionDigest, NATIONAL_PAPERS, EVENING_NATIONAL, scanMentions } from "./frontpage.mjs";
 import { isInterviewBody, interviewCheck, RE_MAYOR_QUOTE, RE_IV_TITLE } from "./interview.mjs";
+import { runScoopPass, buildScoopDaily } from "./scoop.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, riskNews, agendaTerms, agendaAdd, agendaRemove, agendaHit, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
@@ -490,6 +491,9 @@ function saveState() {
     riskInit: !!state.riskInit,
     riskVer: state.riskVer || 0,
     interviewBackfillVer: state.interviewBackfillVer || 0,
+    scoopSeen: (state.scoopSeen || []).slice(-6000),
+    scoopInit: !!state.scoopInit,
+    scoopDailyFor: state.scoopDailyFor || "",
     surgedDate: state.surgedDate || "",
     surged: (state.surged || []).slice(-50),
     scoopTrack: (state.scoopTrack || []).slice(-50),
@@ -1256,6 +1260,25 @@ async function maybeNationalMentions() {
   saveState();
 }
 
+// ---- [단독] 논리 수집(2026-10-19, 1단계 규칙 기반·비용 0원): 2시간마다 전국 [단독] 전수 수집 → scoop/날짜.jsonl, 아침 07:40 전날치 요약을 「단독 논리」 방에 ----
+let scoopLast = 0;
+async function maybeScoop() {
+  if (!NAVER_ID) return;
+  if (Date.now() - scoopLast >= 2 * 3600e3) {
+    scoopLast = Date.now();
+    try { await runScoopPass({ naverH, state, pressInfo }); saveState(); } catch (e) { console.error("단독 수집 오류:", e.message); }
+  }
+  const kst = new Date(Date.now() + 9 * 3600e3);
+  const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
+  const today = kstDate(0);
+  if (mins < 7 * 60 + 40 || mins >= 9 * 60 || state.scoopDailyFor === today) return;
+  state.scoopDailyFor = today; saveState();
+  const r = buildScoopDaily(kstDate(-1));
+  if (!r) { console.log("단독 논리: 전날 수집분 없음"); return; }
+  for (const p of r.parts) if (!await sendCat("단독논리", p)) break;
+  console.log(`🧩 단독 논리 일일 요약: ${r.total}건(논리 ${r.logic}·의원실 ${r.a1}·부산 ${r.busan})`);
+}
+
 // ---- 아침 부산 지면 전체(2026-10-01): 부산일보·국제신문 그날 지면을 면별 전체 목록으로 「부산 지면」 방에 ----
 // 06:00 KST부터 10분 간격으로 매체별 확인 — 올라온 매체부터 바로 보낸다(확인되는 대로, 사용자 요청). 12:00까지.
 // 휴간일(일요일 등)은 지면이 없어 자연히 안 나간다. state.editionFor = { 부산일보: "YYYY-MM-DD", 국제신문: ... }
@@ -1511,6 +1534,7 @@ if (intervalSec > 0 && durationMin > 0) {
     try { await maybeLocalEdition(); } catch (e) { console.error("부산 지면 오류:", e.message); }
     try { await maybeEvening(); } catch (e) { console.error("석간 모니터링 오류:", e.message); }
     try { await maybeNationalMentions(); } catch (e) { console.error("전국 지면 언급 오류:", e.message); }
+    try { await maybeScoop(); } catch (e) { console.error("단독 논리 오류:", e.message); }
     try { await maybeAgendaReview(); } catch (e) { console.error("시책 점검 오류:", e.message); }
     try { await maybeRiskBackfill(); } catch (e) { console.error("리스크 소급 오류:", e.message); }
     try { await maybeInterviewBackfill(); } catch (e) { console.error("인터뷰 소급 오류:", e.message); }
