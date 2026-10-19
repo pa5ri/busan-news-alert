@@ -142,6 +142,32 @@ if (process.argv[1] && process.argv[1].endsWith("frontpage.mjs")) {
 export const LOCAL_PAPERS = [{ code: "082", name: "부산일보" }, { code: "658", name: "국제신문" }];
 // mentionKeys: 전재수 언급 기사의 네이버 기사 키("082/0001234567") 집합 — 제목에 이름이 없어도 본문 언급이면 강조한다(전재수 색인 기반).
 // 강조(2026-10-05, 사용자 결정 C안): ① 맨 위에 언급 기사만 면 번호와 함께 모아 보여주고 ② 아래 면별 목록에서도 그 줄을 「★ 굵은 제목」으로. 링크는 모두 유지.
+// 색인(전재수 검색) 대조 기사는 본문을 한 번 더 읽어 지금도 이름이 있는지 확인한다(2026-10-20).
+// 사례: 부산일보 082/0001403024 — 11:39 웹판(「“해양금융 기능 활성화”… 부산시, BIFC에…」)은 전재수 검색에 잡혔는데
+// 같은 기사 번호의 지면판(「BIFC ‘디스페이스’ 꽉 찼다…」)은 다시 써져 이름이 없음 → 색인만 믿으면 거짓 강조. 조회 실패면 색인을 믿는다.
+export async function bodyHasName(url, name = "전재수") {
+  const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 10000);
+  try {
+    const r = await fetch(url, { headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" }, signal: ac.signal });
+    if (!r.ok) return null;
+    const html = await r.text();
+    const body = (html.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1];
+    if (!body) return null;
+    return body.includes(name);
+  } catch { return null; } finally { clearTimeout(to); }
+}
+/** 색인으로만 잡힌 기사들을 본문 재확인해 '지금도 언급'인 키만 돌려준다(실패는 유지). */
+async function verifyIndexHits(arts, mentionKeys, keyOf) {
+  const ok = new Set();
+  for (const a of arts) {
+    const k = keyOf(a.url);
+    if (!mentionKeys.has(k) || /전재수/.test(a.title)) continue;
+    const v = await bodyHasName(a.url);
+    if (v !== false) ok.add(k);
+  }
+  return ok;
+}
+
 export async function buildEditionMessages(code, name, ymd, mentionKeys = new Set()) {
   const blocks = await fetchEdition(code, ymd);
   if (!blocks.length) return null;
@@ -149,7 +175,8 @@ export async function buildEditionMessages(code, name, ymd, mentionKeys = new Se
   const dow = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
   const total = blocks.reduce((s, b) => s + b.arts.length, 0);
   const keyOf = url => (String(url).match(/article\/(\d+\/\d+)/) || [])[1] || "";
-  const isMention = a => /전재수/.test(a.title) || mentionKeys.has(keyOf(a.url));
+  const verified = await verifyIndexHits(blocks.flatMap(b => b.arts), mentionKeys, keyOf);
+  const isMention = a => /전재수/.test(a.title) || (mentionKeys.has(keyOf(a.url)) && verified.has(keyOf(a.url)));
   const picked = blocks.flatMap(b => b.arts.filter(isMention).map(a => ({ page: b.page, ...a })));
   let head = `📰 <b>${ymd.slice(4, 6)}월 ${ymd.slice(6, 8)}일(${dow}) ${name} 지면</b> — ${blocks.length}개 면 ${total}건`;
   if (picked.length) head += `\n\n★ <b>전재수 언급 ${picked.length}건</b>\n` + picked.map(a => `★ [${a.page}] <b><a href="${a.url}">${esc(a.title)}</a></b>`).join("\n") + `\n━━━━━━━━━━`;
@@ -249,7 +276,8 @@ export async function scanMentions(papers, ymd, mentionKeys) {
     for (let i = 0; i < 2 && !blocks; i++) { try { blocks = await fetchEdition(p.code, ymd); } catch { await new Promise(r => setTimeout(r, 2000)); } }
     if (!blocks) { failed.push(p.name); continue; }
     if (blocks.length) withEdition++;
-    const hits = blocks.flatMap(b => b.arts.filter(a => /전재수/.test(a.title) || mentionKeys.has(keyOf(a.url))).map(a => ({ page: b.page, ...a })));
+    const verified = await verifyIndexHits(blocks.flatMap(b => b.arts), mentionKeys, keyOf);
+    const hits = blocks.flatMap(b => b.arts.filter(a => /전재수/.test(a.title) || (mentionKeys.has(keyOf(a.url)) && verified.has(keyOf(a.url)))).map(a => ({ page: b.page, ...a })));
     if (hits.length) { byPaper[p.name] = hits; total += hits.length; }
   }
   return { byPaper, total, withEdition, failed };
