@@ -9,7 +9,7 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const strip = s => String(s).replace(/<[^>]+>/g, "").replace(/&quot;|&#034;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&apos;|&#39;/g, "'").replace(/\s+/g, " ").trim();
 const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-export const isScoopTitle = t => /^\s*(\[단독\]|【단독】|단독\s)/.test(String(t));
+export const isScoopTitle = t => /^\s*([\[【]\s*단독[^\]】]*[\]】]|단독\s)/.test(String(t));   // [단독]·[단독 인터뷰]·[단독입수]·【단독】 (공개 봇 jhyun12345/naver-exclusive-news 와 같은 기준)
 // 1차 제외: 연예·스포츠·홍보성 — 제목어 + 연예·스포츠 매체
 const RE_ENT = /팬미팅|컴백|앨범|음원|드라마|예능|출연 확정|캐스팅|배우|가수|아이돌|걸그룹|보이그룹|열애|결혼설|화보|OST|예고편|뮤직비디오|콘서트|시구|이적|영입|감독 선임|FA|프로야구 .*계약|방송 출연|유튜버|BJ|웹툰/;
 const ENT_PRESS = /osen|sportschosun|starnews|tenasia|xportsnews|mydaily|spotv|sports\.donga|sportsseoul|isplus|tvreport|joynews24|dispatch|singlelist|thepublic|newsen|topstarnews|stardailynews|mk\.co\.kr\/star|sports\.khan|sportsworldi|mbn.*star|ytn.*star|sedaily.*star|biz\.heraldcorp.*ent|sportalkorea|goal\.com|interfootball/i;
@@ -101,7 +101,7 @@ export async function runScoopPass({ naverH, state, pressInfo, log = console.log
     const lg = extractLogic(txt || strip(it.description));
     const kst = new Date(new Date(it.pubDate).getTime() + 9 * 3600e3);
     const day = kst.toISOString().slice(0, 10);
-    const rec = { t: title.replace(/^\s*(\[단독\]|【단독】|단독\s)\s*/, ""), src: name, link: link || it.originallink || it.link, pub: it.pubDate, A: lg.A, B: lg.B, busan: lg.busan, lawmaker: lg.lawmaker, agency: lg.agency, quote: lg.quote, body: txt ? txt.length : 0 };
+    const rec = { t: title.replace(/^\s*([\[【]\s*단독[^\]】]*[\]】]|단독\s)\s*/, ""), src: name, link: link || it.originallink || it.link, pub: it.pubDate, A: lg.A, B: lg.B, busan: lg.busan, lawmaker: lg.lawmaker, agency: lg.agency, quote: lg.quote, body: txt ? txt.length : 0 };
     if (!existsSync("scoop")) mkdirSync("scoop");
     appendFileSync(`scoop/${day}.jsonl`, JSON.stringify(rec) + "\n");
     added++;
