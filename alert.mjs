@@ -7,7 +7,7 @@ import { loadLedger, saveLedger, updateLedger, composeContextBrief, issueArticle
 import { checkOrdinances } from "./ordinance.mjs";
 import { checkEditorials } from "./editorials.mjs";
 import { buildFrontpage, buildEditionMessages, LOCAL_PAPERS, buildEvening, buildMentionDigest, NATIONAL_PAPERS, EVENING_NATIONAL, scanMentions } from "./frontpage.mjs";
-import { isInterviewBody, interviewCheck, RE_MAYOR_QUOTE } from "./interview.mjs";
+import { isInterviewBody, interviewCheck, RE_MAYOR_QUOTE, RE_IV_TITLE } from "./interview.mjs";
 import { categorize, CAT_EMOJI, isScoop, isExclusive, isBusanRelevant, specialKind, SPECIAL_EMOJI, partyChief, councilNews, socialSub, isAgenda, pollKind, chiefHomonym, riskNews, agendaTerms, agendaAdd, agendaRemove, agendaHit, BUSAN_PLACE, BUSAN_ORG } from "./category.mjs";
 
 const KEYWORD = "부산";
@@ -577,7 +577,7 @@ async function runOnce() {
     const scoopPass = isScoop(title) && isBusanRelevant(rec);
     let special = specialKind(rec);            // 인터뷰(시장)·르포·기고 — 전용 방 추가 발송
     // 제목에 '인터뷰'가 없는 시장 문답 기사(2026-10-06 실측: 머니투데이 「"되돌릴 수 없는 해양수도…"」)는 본문을 읽어 판별
-    if (!special && RE_MAYOR_QUOTE.test(title) && /n\.news\.naver\.com/.test(it.link || "")) {
+    if (!special && RE_IV_TITLE.test(title) && /n\.news\.naver\.com/.test(it.link || "")) {   // 10/19: 제목 전체가 인용문인 기사도 본문을 읽는다
       try { if (await isInterviewBody(it.link, name)) { special = "인터뷰"; console.log(`  본문 판별 인터뷰: ${title.slice(0, 40)}`); } } catch {}
     }
     const chief = partyChief(rec);             // 여야 시당위원장(박홍배·이성권) — 전용 방 추가 발송
@@ -1101,16 +1101,16 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
 // 제목 규칙만으로는 놓친 문답체 인터뷰(머니투데이·뉴시스 취임 100일, 노컷 라디오 전문)를 채운다. 실측 39건 조회 → 3건.
 async function maybeInterviewBackfill() {
   const ivv = state.interviewBackfillVer || 0;
-  if (ivv >= 2 || !(TOPIC_GROUP && TOPICS["인터뷰"])) return;
-  const span = ivv === 0 ? 14 : 3;   // 2차(10/8): 자사 방송 출연 기준 추가분만 최근 3일
-  state.interviewBackfillVer = 2;
+  if (ivv >= 3 || !(TOPIC_GROUP && TOPICS["인터뷰"])) return;
+  const span = ivv === 0 ? 14 : 3;   // 2차(10/8): 자사 방송 출연 기준 추가분만 최근 3일 / 3차(10/19): 문답 쌍 기준 추가분만 최근 3일
+  state.interviewBackfillVer = 3;
   const seenT = new Set(); const cands = [];
   for (const d of [...Array(span)].map((_, i) => kstDate(-i))) {
     const f = `archive/jeon/${d}.jsonl`;
     if (!existsSync(f)) continue;
     for (const l of readFileSync(f, "utf8").split("\n")) {
       if (!l) continue; let r; try { r = JSON.parse(l); } catch { continue; }
-      if (!RE_MAYOR_QUOTE.test(r.t) || specialKind({ t: r.t }) || !/n\.news\.naver\.com/.test(r.link || "")) continue;
+      if (!RE_IV_TITLE.test(r.t) || specialKind({ t: r.t }) || !/n\.news\.naver\.com/.test(r.link || "")) continue;
       const k = r.t.replace(/\s/g, "").slice(0, 20); if (seenT.has(k)) continue; seenT.add(k);
       cands.push(r);
     }
@@ -1119,7 +1119,7 @@ async function maybeInterviewBackfill() {
   for (const r of cands.sort((a, b) => new Date(a.pub) - new Date(b.pub))) {
     const { name } = pressInfo(r.url || r.link);
     let chk = { ok: false }; try { chk = await interviewCheck(r.link, name); } catch {}
-    if (!chk.ok || (ivv === 1 && !/자사 방송/.test(chk.why))) continue;   // 2차는 새 기준(자사 방송 출연)으로 잡히는 것만
+    if (!chk.ok || (ivv === 1 && !/자사 방송/.test(chk.why)) || (ivv === 2 && !/문답 쌍/.test(chk.why))) continue;   // 2차·3차는 그 회차의 새 기준으로 잡히는 것만
 
     const d = new Date(new Date(r.pub).getTime() + 9 * 3600e3).toISOString().slice(5, 10).replace("-", "/");
     if (!await sendCat("인터뷰", `${SPECIAL_EMOJI["인터뷰"]} <b>[인터뷰 · 소급 ${d}]</b> <b>${esc(r.t)}</b>\n<i>${esc(name)}</i>\n${r.link}`)) break;

@@ -11,6 +11,8 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 
 /** 본문을 읽어 볼 가치가 있는 제목인가 — 시장 이름/직함 + 직접 인용 */
 export const RE_MAYOR_QUOTE = /(전재수|부산시장)[^"“”']{0,25}["“][^"”]{4,}["”]|["“][^"”]{4,}["”][^"“”']{0,25}(전재수|부산시장)/;
+/** 전재수 색인 기사 가운데 본문을 읽어 볼 제목: 시장 이름+인용, 또는 제목 전체가 인용문(「“해양수도 부산 위한 또 하나의 초석”」 서울신문 10/19 — 이름 없이 발언만 뽑은 지면 문답) */
+export const RE_IV_TITLE = /(전재수|부산시장)[^"“”']{0,25}["“][^"”]{4,}["”]|["“][^"”]{4,}["”][^"“”']{0,25}(전재수|부산시장)|^\s*["“][^"”]{6,}["”]\s*$/;
 
 // 매체 → 그 매체의 방송·채널 표기(본문에서 "○○ 라디오/유튜브/TV … 출연·인터뷰"로 나오면 자사 인터뷰)
 const OWN_CHANNEL = {
@@ -32,8 +34,13 @@ export async function interviewCheck(naverUrl, srcName = "") {
   const body = (html.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1] || "";
   const summary = (html.match(/<strong class="media_end_summary">([\s\S]*?)<\/strong>/) || [])[1] || "";
   const txt = (summary + "\n" + body).replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/&quot;|&#034;/g, '"').replace(/&nbsp;/g, " ");
-  const qa = txt.split("\n").map(l => l.trim()).filter(l => /^[-―－▶△Q◇◆]\s*\S/.test(l) && l.length >= 8).length;
+  const lines = txt.split("\n").map(l => l.trim()).filter(Boolean);
+  const isQ = l => /^[-―－▶△Q◇◆]\s*\S/.test(l) && l.length >= 8;
+  const qa = lines.filter(isQ).length;
   if (qa >= 5) return { ok: true, why: `문답 ${qa}줄` };
+  // (10/19) 짧은 지면 문답: 질문 줄 바로 다음 줄이 따옴표로 시작하는 답변(40자 이상)인 '문답 쌍'이 3개 이상 — 서울신문 「해양수도 부산 위한 또 하나의 초석」(질문 3개)
+  const pairs = lines.filter((l, i) => isQ(l) && i + 1 < lines.length && /^["“]/.test(lines[i + 1]) && lines[i + 1].length >= 40).length;
+  if (pairs >= 3) return { ok: true, why: `문답 쌍 ${pairs}개` };
   if (/일문일답|대담/.test(txt)) return { ok: true, why: "일문일답·대담 표기" };
   if (/\[\s?인터뷰\s?\]|^\s*인터뷰\s*[|│·]/m.test(txt)) return { ok: true, why: "꼭지 표기" };
   const n = (txt.match(/인터뷰/g) || []).length;
