@@ -34,6 +34,9 @@ export async function interviewCheck(naverUrl, srcName = "") {
   const body = (html.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1] || "";
   const summary = (html.match(/<strong class="media_end_summary">([\s\S]*?)<\/strong>/) || [])[1] || "";
   const txt = (summary + "\n" + body).replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/&quot;|&#034;/g, '"').replace(/&nbsp;/g, " ");
+  // (10/20) 인터뷰 대상이 시장인지부터 — 본문에 전재수·부산시장이 없으면 누구의 인터뷰든 우리 코너가 아니다.
+  // 사례: 국제신문 「“광안리 해변 보행공간 개선…”」(수영구청장 취임 100일 인터뷰)가 '제목 전체 인용문' 가드 + 자사 인터뷰 규칙으로 들어옴.
+  if (!/전재수|부산시장/.test(txt)) return { ok: false, why: "시장 인터뷰 아님(본문에 시장 언급 없음)" };
   const lines = txt.split("\n").map(l => l.trim()).filter(Boolean);
   const isQ = l => /^[-―－▶△Q◇◆]\s*\S/.test(l) && l.length >= 8;
   const qa = lines.filter(isQ).length;
