@@ -37,6 +37,9 @@ export async function interviewCheck(naverUrl, srcName = "") {
   // (10/20) 인터뷰 대상이 시장인지부터 — 본문에 전재수·부산시장이 없으면 누구의 인터뷰든 우리 코너가 아니다.
   // 사례: 국제신문 「“광안리 해변 보행공간 개선…”」(수영구청장 취임 100일 인터뷰)가 '제목 전체 인용문' 가드 + 자사 인터뷰 규칙으로 들어옴.
   if (!/전재수|부산시장/.test(txt)) return { ok: false, why: "시장 인터뷰 아님(본문에 시장 언급 없음)" };
+  // 지나가며 언급(타 시도 인터뷰에서 경쟁 도시로 거론 등)도 걸러낸다: 인터뷰 대상이면 앞부분(요약·리드 400자)에 이름이 나오거나, 발언자 표기(◆ 전재수>)가 있거나, 3회 이상 나온다.
+  const subject = /전재수|부산시장/.test(txt.slice(0, 400)) || /[◆▶◇■]\s*전재수\s*[>〉:]/.test(txt) || (txt.match(/전재수/g) || []).length >= 3;
+  if (!subject) return { ok: false, why: "시장 인터뷰 아님(지나가는 언급)" };
   const lines = txt.split("\n").map(l => l.trim()).filter(Boolean);
   const isQ = l => /^[-―－▶△Q◇◆]\s*\S/.test(l) && l.length >= 8;
   const qa = lines.filter(isQ).length;

@@ -584,6 +584,10 @@ async function runOnce() {
     if (!special && RE_IV_TITLE.test(title) && /n\.news\.naver\.com/.test(it.link || "")) {   // 10/19: 제목 전체가 인용문인 기사도 본문을 읽는다
       try { if (await isInterviewBody(it.link, name)) { special = "인터뷰"; console.log(`  본문 판별 인터뷰: ${title.slice(0, 40)}`); } } catch {}
     }
+    // (10/20) 제목 규칙으로 잡힌 인터뷰도 본문에서 시장이 인터뷰 주체인지 확인 — 제목에 시장이 거론만 된 타인 인터뷰 제외(사용자 기준: 전재수 시장이 주체로서 한 인터뷰만)
+    if (special === "인터뷰" && /n.news.naver.com/.test(it.link || "")) {
+      try { const c = await interviewCheck(it.link, name); if (!c.ok && /시장 인터뷰 아님/.test(c.why)) { special = null; console.log(`  인터뷰 제외(${c.why}): ${title.slice(0, 40)}`); } } catch {}
+    }
     const chief = partyChief(rec);             // 여야 시당위원장(박홍배·이성권) — 전용 방 추가 발송
     const council = councilNews(rec);          // 부산시의회·시의원 — 전용 방 추가 발송
     const risk = riskNews(rec);                // 시장·시청 사법·도덕성 리스크 — 리스크 방으로 '대신' 발송(매체 불문)
