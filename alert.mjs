@@ -585,8 +585,9 @@ async function runOnce() {
       try { if (await isInterviewBody(it.link, name)) { special = "인터뷰"; console.log(`  본문 판별 인터뷰: ${title.slice(0, 40)}`); } } catch {}
     }
     // (10/20) 제목 규칙으로 잡힌 인터뷰도 본문에서 시장이 인터뷰 주체인지 확인 — 제목에 시장이 거론만 된 타인 인터뷰 제외(사용자 기준: 전재수 시장이 주체로서 한 인터뷰만)
-    if (special === "인터뷰" && /n.news.naver.com/.test(it.link || "")) {
-      try { const c = await interviewCheck(it.link, name); if (!c.ok) { special = null; console.log(`  인터뷰 제외(${c.why}): ${title.slice(0, 40)}`); } } catch {}   // 10/21: 원문 없는 예고·요약 보도도 제외(사용자 기준)
+    if (special === "인터뷰") {   // 10/21: 네이버 링크 없는 자사 기사도 원문 링크로 확인(국제뉴스 어린이기자단 예고 기사가 이 틈으로 들어옴)
+      const ivLink = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
+      try { const c = await interviewCheck(ivLink, name); if (!c.ok) { special = null; console.log(`  인터뷰 제외(${c.why}): ${title.slice(0, 40)}`); } } catch {}   // 10/21: 원문 없는 예고·요약 보도도 제외(사용자 기준)
     }
     const chief = partyChief(rec);             // 여야 시당위원장(박홍배·이성권) — 전용 방 추가 발송
     const council = councilNews(rec);          // 부산시의회·시의원 — 전용 방 추가 발송

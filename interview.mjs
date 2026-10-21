@@ -23,7 +23,9 @@ const OWN_CHANNEL = {
 
 /** → { ok, why } */
 export async function interviewCheck(naverUrl, srcName = "") {
-  if (!/n\.news\.naver\.com\/(mnews\/)?article\//.test(String(naverUrl))) return { ok: false, why: "네이버 링크 아님" };
+  // (10/21) 네이버 링크가 없는 자사 기사(국제뉴스 등)도 본문을 읽는다 — 아니면 제목 규칙만으로 통과해 예고 기사가 올라온다.
+  const isNaver = /n\.news\.naver\.com\/(mnews\/)?article\//.test(String(naverUrl));
+  if (!/^https?:\/\//.test(String(naverUrl))) return { ok: false, why: "링크 없음" };
   const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 10000);
   let html;
   try {
@@ -31,8 +33,15 @@ export async function interviewCheck(naverUrl, srcName = "") {
     if (!r.ok) return { ok: false, why: "HTTP " + r.status };
     html = await r.text();
   } catch (e) { return { ok: false, why: "조회 실패" }; } finally { clearTimeout(to); }
-  const body = (html.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1] || "";
-  const summary = (html.match(/<strong class="media_end_summary">([\s\S]*?)<\/strong>/) || [])[1] || "";
+  let body = isNaver ? (html.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1] || "" : "";
+  const summary = isNaver ? (html.match(/<strong class="media_end_summary">([\s\S]*?)<\/strong>/) || [])[1] || "" : "";
+  if (!isNaver) {
+    // 자사 CMS 공통 본문 틀(ndsoft article-view-content-div 등) → 없으면 30자 이상 <p> 단락을 이어 붙인다
+    body = (html.match(/<article[^>]*id="(?:article-view-content-div|articleBody|article_body|newsContent|textBody)"[^>]*>([\s\S]*?)<\/article>/) || [])[1]
+      || (html.match(/<p[^>]*>[\s\S]*?<\/p>/g) || []).filter(p => p.replace(/<[^>]+>/g, "").trim().length >= 30).join("\n");   // div 틀은 안쪽 </div>에서 잘리므로 단락 모음으로
+    body = body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<\/p>/gi, "\n");
+    if (!body.trim()) return { ok: false, why: "본문 추출 실패(자사 링크)" };
+  }
   const txt = (summary + "\n" + body).replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/&quot;|&#034;/g, '"').replace(/&nbsp;/g, " ");
   // (10/20) 인터뷰 대상이 시장인지부터 — 본문에 전재수·부산시장이 없으면 누구의 인터뷰든 우리 코너가 아니다.
   // 사례: 국제신문 「“광안리 해변 보행공간 개선…”」(수영구청장 취임 100일 인터뷰)가 '제목 전체 인용문' 가드 + 자사 인터뷰 규칙으로 들어옴.
@@ -50,7 +59,7 @@ export async function interviewCheck(naverUrl, srcName = "") {
   // (10/21) 인터뷰 '원문'이 실려 있어야 한다 — 예고·행사 기사(연합 「어린이신문 기자단, 전재수 시장 인터뷰」: "대면 인터뷰를 한다고 밝혔다")는 제외.
   // 원문의 증거 = 문답 줄/쌍(위) 또는 시장 발언 인용 덩어리(20자 이상 따옴표)가 충분히 많을 것.
   const quotes = (txt.match(/[“"][^”"\n]{20,}[”"]/g) || []).length;
-  const preview = /인터뷰(를|을)?\s?(한다|가진다|진행한다|할 예정|열린다|연다)|인터뷰가 (열|진행)/.test(txt);
+  const preview = /인터뷰(를|을)?\s?(한다|가진다|진행한다|할 예정|열린다|연다)|인터뷰가 (열|진행)|묻고 답하는 시간을 갖는다|질문할 예정/.test(txt);
   if (preview && quotes < 5) return { ok: false, why: "인터뷰 예고·행사 보도(원문 없음)" };
   if (/일문일답|대담/.test(txt) && quotes >= 3) return { ok: true, why: `일문일답·대담 표기(인용 ${quotes}개)` };
   const n = (txt.match(/인터뷰/g) || []).length;
