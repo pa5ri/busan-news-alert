@@ -47,17 +47,21 @@ export async function interviewCheck(naverUrl, srcName = "") {
   // (10/19) 짧은 지면 문답: 질문 줄 바로 다음 줄이 따옴표로 시작하는 답변(40자 이상)인 '문답 쌍'이 3개 이상 — 서울신문 「해양수도 부산 위한 또 하나의 초석」(질문 3개)
   const pairs = lines.filter((l, i) => isQ(l) && i + 1 < lines.length && /^["“]/.test(lines[i + 1]) && lines[i + 1].length >= 40).length;
   if (pairs >= 3) return { ok: true, why: `문답 쌍 ${pairs}개` };
-  if (/일문일답|대담/.test(txt)) return { ok: true, why: "일문일답·대담 표기" };
-  if (/\[\s?인터뷰\s?\]|^\s*인터뷰\s*[|│·]/m.test(txt)) return { ok: true, why: "꼭지 표기" };
+  // (10/21) 인터뷰 '원문'이 실려 있어야 한다 — 예고·행사 기사(연합 「어린이신문 기자단, 전재수 시장 인터뷰」: "대면 인터뷰를 한다고 밝혔다")는 제외.
+  // 원문의 증거 = 문답 줄/쌍(위) 또는 시장 발언 인용 덩어리(20자 이상 따옴표)가 충분히 많을 것.
+  const quotes = (txt.match(/[“"][^”"\n]{20,}[”"]/g) || []).length;
+  const preview = /인터뷰(를|을)?\s?(한다|가진다|진행한다|할 예정|열린다|연다)|인터뷰가 (열|진행)/.test(txt);
+  if (preview && quotes < 5) return { ok: false, why: "인터뷰 예고·행사 보도(원문 없음)" };
+  if (/일문일답|대담/.test(txt) && quotes >= 3) return { ok: true, why: `일문일답·대담 표기(인용 ${quotes}개)` };
   const n = (txt.match(/인터뷰/g) || []).length;
   const reportish = /인터뷰(에서|를 통해|에 출연|에 나와|서 밝혔)|(출연|나와)\s?(해|서)?[^.]{0,30}(말했|밝혔|강조했)/.test(txt);
-  if (n && !reportish) return { ok: true, why: `'인터뷰' ${n}회(받아쓰기 표현 없음)` };
+  if (n && !reportish && quotes >= 5) return { ok: true, why: `'인터뷰' ${n}회·인용 ${quotes}개` };
   const own = OWN_CHANNEL[srcName];
   if (own) {
-    // "부산CBS 유튜브 '로컬디스크C'에 출연해", "KNN 라디오 인터뷰에서" — 자사 채널명 + 출연·인터뷰가 같은 문장에
+    // "부산CBS 유튜브 '로컬디스크C'에 출연해", "KNN 라디오 인터뷰에서" — 자사 채널명 + 출연·인터뷰가 같은 문장에, 발언 인용이 3개 이상
     const re = new RegExp(`(${own.source})[^.\\n]{0,40}(출연|인터뷰|대담|방송)`);
-    if (re.test(txt)) return { ok: true, why: `자사 방송 출연(${srcName})` };
+    if (re.test(txt) && quotes >= 3) return { ok: true, why: `자사 방송 출연(${srcName}, 인용 ${quotes}개)` };
   }
-  return { ok: false, why: (n || reportish) ? "타 매체 받아쓰기 보도" : `문답 ${qa}줄·표기 없음` };
+  return { ok: false, why: (n || reportish) ? `타 매체 받아쓰기·요약 보도(인용 ${quotes}개)` : `문답 ${qa}줄·표기 없음(인용 ${quotes}개)` };
 }
 export const isInterviewBody = async (url, srcName) => (await interviewCheck(url, srcName)).ok;
