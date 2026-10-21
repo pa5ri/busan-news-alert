@@ -50,7 +50,10 @@ export async function interviewCheck(naverUrl, srcName = "") {
   const subject = /전재수|부산시장/.test(txt.slice(0, 400)) || /[◆▶◇■]\s*전재수\s*[>〉:]/.test(txt) || (txt.match(/전재수/g) || []).length >= 3;
   if (!subject) return { ok: false, why: "시장 인터뷰 아님(지나가는 언급)" };
   const lines = txt.split("\n").map(l => l.trim()).filter(Boolean);
-  const isQ = l => /^[-―－▶△Q◇◆]\s*\S/.test(l) && l.length >= 8;
+  // (10/21) ◇·◆·△·■는 기사 소제목에도 흔히 쓴다(문화일보 국감 기사 「◇생곡소각장 강행 방침…」 5줄이 문답으로 세어짐).
+  //  이 기호들은 질문형으로 끝날 때만 질문 줄로 센다. -·―·Q·▶는 그대로.
+  const QEND = /(\?|？|는가|나요|까요|까|는지|는데|은데|나|가|은|는|요|란|라면|다면)[.\s]*$/;
+  const isQ = l => l.length >= 8 && (/^[-―－Q▶]\s*\S/.test(l) || (/^[◇◆△■]\s*\S/.test(l) && QEND.test(l)));
   const qa = lines.filter(isQ).length;
   if (qa >= 5) return { ok: true, why: `문답 ${qa}줄` };
   // (10/19) 짧은 지면 문답: 질문 줄 바로 다음 줄이 따옴표로 시작하는 답변(40자 이상)인 '문답 쌍'이 3개 이상 — 서울신문 「해양수도 부산 위한 또 하나의 초석」(질문 3개)
