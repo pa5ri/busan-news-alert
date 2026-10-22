@@ -28,7 +28,8 @@ const total = [...central, ...busan, ...paper].reduce((a,n)=>a+cnt(n), 0);   // 
 const line = n => {
   const s = byName[n];
   const warn = s?.note && s.items.length === 0 && !/\(정상\)$/.test(s.note) ? " ⚠" : "";
-  return `· ${s?.label || n}: ${cnt(n)}건${warn}`;
+  const kwN = (s?.items || []).filter(it => it.kw).length;   // (2026-10-23) 매체별 전재수 언급 수를 옆에 — 0건이면 생략
+  return `· ${s?.label || n}: ${cnt(n)}건${kwN ? ` <b>(언급 ${kwN}건)</b>` : ""}${warn}`;
 };
 // "(정상)"으로 끝나는 노트는 안내(ℹ️)로, 나머지는 경고(⚠)로 표시
 const notes = sources.filter(s => s.note).map(s => `${/\(정상\)$/.test(s.note) ? "ℹ️" : "⚠"} ${s.source}: ${s.note}`).join("\n");
