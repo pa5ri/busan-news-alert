@@ -1273,15 +1273,8 @@ async function maybeScoop() {
     scoopLast = Date.now();
     try { await runScoopPass({ naverH, state, pressInfo }); saveState(); } catch (e) { console.error("단독 수집 오류:", e.message); }
   }
-  const kst = new Date(Date.now() + 9 * 3600e3);
-  const mins = kst.getUTCHours() * 60 + kst.getUTCMinutes();
-  const today = kstDate(0);
-  if (mins < 7 * 60 + 40 || mins >= 9 * 60 || state.scoopDailyFor === today) return;
-  state.scoopDailyFor = today; saveState();
-  const r = buildScoopDaily(kstDate(-1));
-  if (!r) { console.log("단독 논리: 전날 수집분 없음"); return; }
-  for (const p of r.parts) if (!await sendCat("단독논리", p)) break;
-  console.log(`🧩 단독 논리 일일 요약: ${r.total}건(논리 ${r.logic}·의원실 ${r.a1}·부산 ${r.busan})`);
+  // (2026-10-23) 텔레그램 「단독 논리」 방은 사용자가 닫음 → 아침 요약 발송 중단. 수집(scoop/)만 계속하고,
+  // 논리 장표는 노션 DB 「🧩 단독 논리 장표」로 옮겼다(로컬 예약작업이 매일 반영). 주제 키가 없으면 sendCat이 기본 방으로 새므로 발송 코드는 아예 두지 않는다.
 }
 
 // ---- 아침 부산 지면 전체(2026-10-01): 부산일보·국제신문 그날 지면을 면별 전체 목록으로 「부산 지면」 방에 ----

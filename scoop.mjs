@@ -42,16 +42,27 @@ export function extractLogic(txt) {
   for (const [c, , re] of A_RULES) if (re.test(txt)) A.push(c);
   for (const [c, , re] of B_RULES) if (re.test(txt)) B.push(c);
   // 의원·기관(A1일 때): "○○당 ○○○ 의원(실)이 ○○부(청·공사)로부터 받은"
-  let lawmaker = "", agency = "";
-  const m = txt.match(/([가-힣]{2,4})\s?의원(실)?[^.]{0,40}?(?:([가-힣A-Za-z·]{2,20}(?:부|청|처|원|공사|공단|공무원연금공단|위원회|시|도|군|구|진흥원|재단|은행|거래소|공항|병원|대학교|대학|법원|경찰청|교육청))(?:으로부터|로부터|에서|에|으로|이|가|의)?)?[^.]{0,20}?(제출\s?받|받은|입수|확보|제출한)/);
-  if (m) { lawmaker = m[1]; agency = m[3] || ""; }
+  let lawmaker = "", agency = "", party = "";
+  // (10/23) 정당명이 이름 자리에 잡히던 문제(국민의힘·더불어민주당 → "국민의힘"·"어민주당") — 정당을 따로 떼고 이름은 2~3자로
+  // 두 어순 모두: "국민의힘 서천호 의원실이" / "전진숙 더불어민주당 의원이". 정당 없는 "최 의원은"류는 2자 이상 + 앞 글자가 한글이 아닐 때만.
+  const RE_PN = /(더불어민주당|민주당|국민의힘|조국혁신당|개혁신당|진보당|기본소득당|사회민주당|무소속)\s*(?:소속\s*)?([가-힣]{2,3})\s?의원/;
+  const RE_NP = /(?<![가-힣])([가-힣]{2,3})\s(더불어민주당|민주당|국민의힘|조국혁신당|개혁신당|진보당|기본소득당|사회민주당|무소속)\s?의원/;
+  const RE_N = /(?<![가-힣])([가-힣]{2,3})\s?의원(?:실)?(?:이|은|측|에게|의|실이|실은|실에)/;
+  const NOT_NAME = /^(국회|소속|해당|같은|관련|당시|일부|여당|야당|여야|간사|위원|상임|국민|민주|정의|무소속|병|의)$/;
+  const a = txt.match(RE_PN), b = txt.match(RE_NP);
+  const pick = [a && { i: a.index, name: a[2], party: a[1] }, b && { i: b.index, name: b[1], party: b[2] }].filter(Boolean).sort((x, y) => x.i - y.i)[0];
+  if (pick && !NOT_NAME.test(pick.name)) { lawmaker = pick.name; party = pick.party.replace(/^민주당$/, "더불어민주당"); }
+  else { const c = txt.match(RE_N); if (c && !NOT_NAME.test(c[1])) lawmaker = c[1]; }
+  const ag = txt.match(/([가-힣A-Za-z·]{2,20}(?:부|청|처|원|공사|공단|위원회|진흥원|재단|은행|거래소|공항|병원|법원|경찰청|교육청|시청|도청|구청|군청|센터|협회|연구원))(?:으로부터|로부터|에서|이|가)\s?(?:제출\s?받은|받은|제출한|제출받은|낸)/);
+  if (ag) agency = ag[1];
   // 근거 문장: A 규칙 중 첫 매치가 든 문장(200자 한도)
   let quote = "";
   const sents = txt.split(/(?<=[.다])\s+(?=[가-힣"“'(\[])/);
   for (const [, , re] of A_RULES) { const s = sents.find(x => re.test(x)); if (s) { quote = s.trim().slice(0, 200); break; } }
   if (!quote) for (const [, , re] of B_RULES) { const s = sents.find(x => re.test(x)); if (s) { quote = s.trim().slice(0, 200); break; } }
-  const busan = RE_BUSAN.test(txt);
-  return { A, B, lawmaker, agency, quote, busan };
+  // (10/23) 지나가는 한 번(증시·전국 나열 기사)은 빼고 본문에 2회 이상일 때만 '부산 언급'
+  const busan = (txt.match(new RegExp(RE_BUSAN.source, "g")) || []).length >= 2;
+  return { A, B, lawmaker, party, agency, quote, busan };
 }
 
 async function naverBody(url) {
@@ -101,7 +112,7 @@ export async function runScoopPass({ naverH, state, pressInfo, log = console.log
     const lg = extractLogic(txt || strip(it.description));
     const kst = new Date(new Date(it.pubDate).getTime() + 9 * 3600e3);
     const day = kst.toISOString().slice(0, 10);
-    const rec = { t: title.replace(/^\s*([\[【]\s*단독[^\]】]*[\]】]|단독\s)\s*/, ""), src: name, link: link || it.originallink || it.link, pub: it.pubDate, A: lg.A, B: lg.B, busan: lg.busan, lawmaker: lg.lawmaker, agency: lg.agency, quote: lg.quote, body: txt ? txt.length : 0 };
+    const rec = { t: title.replace(/^\s*([\[【]\s*단독[^\]】]*[\]】]|단독\s)\s*/, ""), src: name, link: link || it.originallink || it.link, pub: it.pubDate, A: lg.A, B: lg.B, busan: lg.busan, lawmaker: lg.lawmaker, party: lg.party, agency: lg.agency, quote: lg.quote, body: txt ? txt.length : 0 };
     if (!existsSync("scoop")) mkdirSync("scoop");
     appendFileSync(`scoop/${day}.jsonl`, JSON.stringify(rec) + "\n");
     added++;
