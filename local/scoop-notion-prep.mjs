@@ -13,7 +13,7 @@ const OUT = resolve(ROOT, "..", "단독논리");
 const { extractLogic } = await import(pathToFileURL(resolve(ROOT, "scoop.mjs")).href);
 
 const A_NAME = { A1: "의원실 자료", A2: "정보공개·감사", A3: "내부 문건·공문", A4: "전수·통계", A5: "현장·제보", A6: "수사·사법" };
-const B_NAME = { B1: "기준 부재", B2: "미이행", B3: "격차·비교", B4: "공백·0건", B5: "역효과", B6: "숨김·축소", B7: "특혜·수익", B8: "보안·안전 공백" };
+const B_NAME = { B1: "기준 부재", B2: "미이행", B3: "격차·비교", B4: "공백·0건", B5: "역효과", B6: "숨김·축소", B7: "특혜·수익", B8: "보안·안전 공백", B9: "관리 부실", B10: "봐주기·솜방망이", B11: "급증·추세", B12: "혈세·재정 부담" };
 const PARTIES = new Set(["더불어민주당", "국민의힘", "조국혁신당", "개혁신당", "진보당", "기본소득당", "사회민주당", "무소속"]);
 const keyOf = r => (String(r.link || "").match(/article\/(\d+\/\d+)/) || [])[1] || String(r.link || r.t);
 const readJsonl = f => readFileSync(f, "utf8").split("\n").filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
@@ -28,12 +28,22 @@ if (existsSync(scoopDir)) for (const f of readdirSync(scoopDir).filter(f => /^\d
   for (const r of readJsonl(resolve(scoopDir, f))) { const k = keyOf(r); if (!byKey.has(k)) byKey.set(k, { ...r, day: f.slice(0, 10), full: false }); }
 
 // 2) 재추출·선별·제목 중복 제거
+// (10/24) 사람 보정: 노션에서 '검토=분류 틀림'으로 표시하고 근거 출처·논리 구조를 고친 행은 예약작업이 ../단독논리/분류_보정.json
+//   ({키: {A:[이름…], B:[이름…]}})으로 내려 둔다. 집계는 규칙 결과 대신 사람 보정을 쓴다.
+const A_CODE = { "의원실 자료": "A1", "정보공개·감사": "A2", "내부 문건·공문": "A3", "전수·통계": "A4", "현장·제보": "A5", "수사·사법": "A6" };
+const B_CODE = { "기준 부재": "B1", "미이행": "B2", "격차·비교": "B3", "공백·0건": "B4", "역효과": "B5", "숨김·축소": "B6", "특혜·수익": "B7", "보안·안전 공백": "B8", "관리 부실": "B9", "봐주기·솜방망이": "B10", "급증·추세": "B11", "혈세·재정 부담": "B12" };
+const fixFile = resolve(OUT, "분류_보정.json");
+const fixes = existsSync(fixFile) ? JSON.parse(readFileSync(fixFile, "utf8")) : {};
 const seenT = new Set(); const rows = [];
 for (const [k, r] of [...byKey].sort((a, b) => a[1].day.localeCompare(b[1].day))) {
   const tk = String(r.t).replace(/\s/g, "").slice(0, 25); if (seenT.has(tk)) continue; seenT.add(tk);
-  const lg = r.full && r.body ? extractLogic(r.body) : { A: r.A || [], B: r.B || [], busan: !!r.busan, lawmaker: r.lawmaker || "", party: r.party || "", agency: r.agency || "", quote: r.quote || "" };
-  // 장표에는 '논리'가 있는 것만: 논리 구조(B)가 잡혔거나 의원실 자료(A1)형. 부산 언급만 있는 건(증시·행사 등)은 넣지 않고 태그로만 쓴다.
-  if (!(lg.B.length || lg.A.includes("A1"))) continue;
+  const lg = r.full && r.body ? extractLogic(r.t + "\n" + r.body) : { A: r.A || [], B: r.B || [], busan: !!r.busan, lawmaker: r.lawmaker || "", party: r.party || "", agency: r.agency || "", quote: r.quote || "" };
+  // 장표에는 '논리'가 있는 것만: 의원실 자료(A1)형이거나, 논리 구조(B)가 잡혔고 공공 부문(정부·부처·공기관·지자체·의원·국감)이 등장하는 것.
+  // (10/24) 기업 거래·증시·연예 단독(IPO·경영권 등)은 B가 잡혀도 공공 대상이 없으면 뺀다. 부산 언급만 있는 건도 넣지 않고 태그로만 쓴다.
+  const PUBLIC = /정부|부처|[가-힣]{1,8}(부|청|처)(는|가|이|의|에|로|와|도|에서)\s|공사(는|가|의|에서)|공단|지자체|지방자치단체|시청|구청|군청|도청|교육청|의원|국회|국정감사|국감|공공기관|공무원|위원회|지방의회/;
+  if (!(lg.A.includes("A1") || (lg.B.length && PUBLIC.test(r.t + " " + (r.body || r.quote || ""))))) continue;
+  const fx = fixes[k];
+  if (fx) { lg.A = (fx.A || []).map(n => A_CODE[n]).filter(Boolean); lg.B = (fx.B || []).map(n => B_CODE[n]).filter(Boolean); lg.fixed = true; }
   rows.push({ key: k, day: r.day, t: r.t, src: r.src, link: r.link, ...lg });
 }
 
@@ -55,7 +65,7 @@ writeFileSync(resolve(OUT, "notion_queue.json"), JSON.stringify(queue, null, 1))
 const cnt = (arr, f) => { const m = {}; for (const x of arr) for (const k of [].concat(f(x)).filter(Boolean)) m[k] = (m[k] || 0) + 1; return Object.entries(m).sort((a, b) => b[1] - a[1]); };
 const days = [...new Set(rows.map(r => r.day))].sort();
 const matrix = {}; for (const r of rows) for (const a of (r.A.length ? r.A : ["-"])) for (const b of (r.B.length ? r.B : ["-"])) matrix[a + "|" + b] = (matrix[a + "|" + b] || 0) + 1;
-const Acols = ["A1", "A2", "A3", "A4", "A5", "A6", "-"], Brows = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8"];
+const Acols = ["A1", "A2", "A3", "A4", "A5", "A6", "-"], Brows = ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8", "B9", "B10", "B11", "B12"];
 const md = [];
 md.push(`# 단독 논리 — 반복 패턴 요약`, ``, `기간 ${days[0]} ~ ${days[days.length - 1]} · 선별 ${rows.length}건(논리 구조 있음 ∪ 의원실 자료) · 수집 전체 ${byKey.size}건 · 생성 ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`, ``);
 md.push(`## 근거 출처 × 논리 구조`, ``, `| 논리 구조 \\ 근거 | ${Acols.map(c => A_NAME[c] || "출처 미상").join(" | ")} |`, `|---|${Acols.map(() => "---").join("|")}|`);
