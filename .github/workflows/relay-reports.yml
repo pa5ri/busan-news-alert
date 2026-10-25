@@ -1,0 +1,47 @@
+name: 참모 보고 중계
+
+# reports/*.md 가 푸시되면 바뀐 파일마다 텔레그램 방으로 보낸다. 파일이 원본, 텔레그램은 사본.
+# 파일 머리에 front matter:
+#   ---
+#   room: 변경이력        ← TG_TOPICS 키(없으면 변경이력)
+#   title: 자동화 감시 2026-10-26
+#   ---
+#   본문(마크다운 간이: **굵게**, - 목록, [제목](URL))
+on:
+  push:
+    branches: [main]
+    paths: ["reports/**.md"]
+  workflow_dispatch:
+    inputs:
+      file: { description: "reports/ 아래 파일 하나", required: false }
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
+      - name: 바뀐 보고 파일 발송
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_TOPIC_GROUP: ${{ secrets.TG_TOPIC_GROUP }}
+          TG_TOPICS: ${{ secrets.TG_TOPICS }}
+          ONE: ${{ github.event.inputs.file }}
+        run: |
+          if [ -n "$ONE" ]; then files="$ONE"; else files=$(git diff --name-only HEAD~1 HEAD -- 'reports/*.md' 'reports/**/*.md' | grep -v README || true); fi
+          [ -z "$files" ] && { echo "보낼 파일 없음"; exit 0; }
+          for f in $files; do [ -f "$f" ] || continue; node -e '
+            const fs=require("fs"); const f=process.argv[1];
+            let md=fs.readFileSync(f,"utf8"); let room="변경이력", title=f.replace(/^reports\//,"").replace(/\.md$/,"");
+            const fm=md.match(/^---\n([\s\S]*?)\n---\n?/); if(fm){ md=md.slice(fm[0].length); for(const l of fm[1].split("\n")){ const m=l.match(/^(\w+):\s*(.*)$/); if(!m)continue; if(m[1]==="room")room=m[2].trim(); if(m[1]==="title")title=m[2].trim(); } }
+            const esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+            let body=esc(md.trim())
+              .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,"<a href=\"$2\">$1</a>")
+              .replace(/\*\*(.+?)\*\*/g,"<b>$1</b>")
+              .replace(/^#{1,3}\s*(.+)$/gm,"<b>$1</b>")
+              .replace(/^- /gm,"▸ ");
+            const TOPICS=JSON.parse(process.env.TG_TOPICS||"{}"); const tid=TOPICS[room]||TOPICS["변경이력"];
+            const chunks=[]; let t=`🗂 <b>${esc(title)}</b>\n\n${body}`; while(t.length){ chunks.push(t.slice(0,3800)); t=t.slice(3800); }
+            (async()=>{ for(const text of chunks){ const r=await fetch(`https://api.telegram.org/bot${process.env.TG_BOT_TOKEN}/sendMessage`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({chat_id:process.env.TG_TOPIC_GROUP,message_thread_id:tid,text,parse_mode:"HTML",disable_web_page_preview:true})}).then(r=>r.json()); console.log(r.ok?`발송 OK: ${f} → ${room}`:`실패: ${r.description}`); await new Promise(r=>setTimeout(r,3500)); } })();
+          ' "$f"; done

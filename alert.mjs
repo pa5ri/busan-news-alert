@@ -1030,6 +1030,36 @@ async function pollCommands(token, offsetKey) {
         await tg(token, "sendMessage", { ...dest, text: reply, parse_mode: "HTML" });
         continue;
       }
+      // 「일지 <URL> [메모]」 「추적 <스레드ID> <키워드[,키워드]>」 → flags/날짜.jsonl (예약 작업이 노션 스레드에 반영, 2026-10-25)
+      const fl = m.text.match(/^\s*(일지|추적)\s+(\S+)\s*(.*)$/s);
+      if (fl) {
+        const dest = { chat_id: m.chat.id };
+        if (m.message_thread_id) dest.message_thread_id = m.message_thread_id;
+        let reply;
+        try {
+          const kind = fl[1], arg = fl[2].trim(), rest = fl[3].trim();
+          const rec = { at: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 19).replace("T", " "), kind,
+            by: (m.from && (m.from.username || m.from.first_name)) || "", thread: m.message_thread_id || null };
+          if (kind === "일지") {
+            if (!/^https?:\/\//.test(arg)) throw new Error("일지 뒤에는 기사 URL");
+            // 아카이브에 있으면 제목·매체·날짜를 붙여 둔다(최근 14일)
+            let hit = null, hitDay = "";
+            for (let i = 0; i < 14 && !hit; i++) { const dd = kstDate(-i); hit = loadDays([dd]).find(it => it.url === arg || String(it.url).split("#")[0] === arg.split("#")[0]) || null; if (hit) hitDay = dd; }
+            Object.assign(rec, { url: arg, memo: rest, t: hit ? hit.t : "", src: hit ? hit.src : "", d: hitDay, pub: hit ? hit.pub : "" });
+            reply = `📝 일지 후보 기록${hit ? `: ${esc(hit.t.slice(0, 60))} (${esc(hit.src)})` : " (아카이브에 없는 URL — 그대로 기록)"}${rest ? `\n메모: ${esc(rest)}` : ""}\n→ 다음 threads.json 갱신 때 노션 스레드 일지 후보로 올라갑니다.`;
+          } else {
+            const kws = rest.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+            if (!kws.length) throw new Error("추적 <스레드ID> <키워드,키워드>");
+            Object.assign(rec, { id: arg, keywords: kws });
+            reply = `🔎 추적 키워드 기록: <b>${esc(arg)}</b> ← ${kws.map(esc).join(", ")}\n→ 다음 갱신 때 노션 스레드 「추적 키워드」에 더해집니다(없는 ID면 보류 보고).`;
+          }
+          mkdirSync("flags", { recursive: true });
+          appendFileSync(`flags/${kstDate(0)}.jsonl`, JSON.stringify(rec) + "\n");
+        } catch (e) { reply = `⚠ ${esc(e.message)}`; }
+        console.log(`명령 수신(${offsetKey}): ${fl[1]} ${fl[2].slice(0, 40)}`);
+        await tg(token, "sendMessage", { ...dest, text: reply, parse_mode: "HTML", disable_web_page_preview: true });
+        continue;
+      }
       const mt = m.text.match(/(?:top|톱)\s*(\d{1,3})/i);
       if (mt) {
         const n = Math.min(100, Math.max(1, Number(mt[1])));
