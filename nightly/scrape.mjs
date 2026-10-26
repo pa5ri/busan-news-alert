@@ -35,7 +35,18 @@ const D_URL  = `${D.slice(0,4)}/${D.slice(4,6)}/${D.slice(6,8)}`; // YYYY/MM/DD
 console.log(`대상 날짜: ${D_DASH}`);
 
 const results = [];
+// (2026-10-27) 부산 방송 칸은 부산 기사만 — KNN·부산MBC·KBS부산은 경남·울산 기사도 함께 내보낸다
+//   (예: 「양산시 청소년 버스비 무료화 사업 시기 조정」). 부산 밖 지명이 나오고 부산 낱말이 없으면 뺀다.
+//   지명이 없는 전국·일반 기사는 판단할 근거가 없어 그대로 둔다. 김해공항은 부산 관문이라 부산 낱말로 친다.
+const BUSAN_WORD = /부산|김해공항|가덕|해운대|광안|서면|기장|영도|동래|사하|사상|금정|수영구|연제|강서구|북항|남포|센텀|BNK|부울경/;
+const NON_BUSAN = /경남|경상남도|창원|김해|양산|거제|통영|진주|밀양|사천|함안|창녕|고성군|남해|하동|산청|함양|거창|합천|의령|울산|대구|경북|제주|전남|광주|대전|세종|충남|충북|전북|강원|인천|경기도|수도권/;
+const busanOnly = items => items.filter(it => { const t = String(it.title); return BUSAN_WORD.test(t) || !NON_BUSAN.test(t); });
 const push = (group, source, items, note) => {
+  if (group === "부산방송") {
+    const kept = busanOnly(items);
+    if (kept.length < items.length) console.log(`  ${source}: 부산 밖 기사 ${items.length - kept.length}건 제외 — ${items.filter(x => !kept.includes(x)).map(x => x.title).join(" / ").slice(0, 200)}`);
+    items = kept;
+  }
   console.log(`${source.padEnd(14)} ${String(items.length).padStart(3)}건${note ? "  ⚠ " + note : ""}`);
   results.push({ group, source, items, ...(note ? { note } : {}) });
 };
@@ -224,7 +235,8 @@ try {
         const text = (a.textContent||'').replace(/\s+/g,' ').trim();
         if (!idx) return;
         const hasDate = text.includes(dDash);
-        let t = text.replace(/20\d{2}-\d{2}-\d{2}/g,'').trim();
+        // (10/27) 목록형 항목은 <a> 안에 제목+요약 본문+기자명이 함께 들어 있어 textContent가 본문까지 붙는다 → title 속성·.ns_tit만 쓴다
+        let t = ((a.getAttribute('title') || a.querySelector('.ns_tit, .h3')?.textContent || text).replace(/\s+/g,' ').replace(/20\d{2}-\d{2}-\d{2}/g,'').trim());
         if (hasDate && t.length > 6 && !m.has(idx))
           m.set(idx, { title: t.slice(0, 80), url: `https://busanmbc.co.kr/01_new/new01_view.asp?idx=${idx}` });
       });
@@ -245,7 +257,7 @@ try {
             const idx = ((a.getAttribute('href')||'').match(/NewsViewFunc\((\d+)/)||[])[1];
             const text = (a.textContent||'').replace(/\s+/g,' ').trim();
             if (!idx || !text.includes(dDash)) return;
-            const t = text.replace(/20\d{2}-\d{2}-\d{2}/g,'').trim();
+            const t = (a.getAttribute('title') || a.querySelector('.ns_tit, .h3')?.textContent || text).replace(/\s+/g,' ').replace(/20\d{2}-\d{2}-\d{2}/g,'').trim();
             if (t.length > 6 && !m.has(idx)) m.set(idx, { title: t.slice(0, 80), url: `https://busanmbc.co.kr/01_new/new01_view.asp?idx=${idx}` });
           });
           return [...m.values()];
