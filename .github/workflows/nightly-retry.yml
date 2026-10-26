@@ -36,7 +36,7 @@ jobs:
       - name: 30분 대기 후 재수집·보충 (최대 2회)
         working-directory: nightly
         env:
-          TG_BOT_TOKEN: ${{ secrets.TG_NIGHTLY_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}   # 10/27 실시간 봇 하나로 통합
           TG_CHAT_ID: ${{ secrets.TG_NIGHTLY_CHAT || secrets.TG_CHAT_ID }}
           NAVER_ID: ${{ secrets.NAVER_ID }}
           NAVER_SECRET: ${{ secrets.NAVER_SECRET }}

@@ -32,6 +32,8 @@
 
 ## 2. 텔레그램 구조
 
+**2026-10-27 봇 통합**: 사용자 요청("많아 보여서")으로 발송을 전부 @busan_live_bot 하나로 합쳤다. alert.yml은 브리핑·입법예고·의안 토큰을 넘기지 않아 alert.mjs 폴백(TG_BOT_TOKEN)으로 보내고, nightly·nightly-retry·jtbc-backfill은 TG_BOT_TOKEN을 쓴다. 나머지 4개 봇은 그룹에서 내보내도 된다(시크릿은 되돌리기용으로 남겨 둠). 22시대 동시 발송 대비 nightly/telegram.mjs에 429 재시도 추가. 아래 표는 통합 전 구성.
+
 봇 5개 (토큰은 GitHub Secrets, 값은 BotFather에서 재확인 가능):
 
 | 봇 | 표시명 | 시크릿 | 역할 |

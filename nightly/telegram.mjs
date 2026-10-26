@@ -8,18 +8,23 @@ const TOKEN = process.env.TG_BOT_TOKEN;
 const CHATS = String(process.env.TG_CHAT_ID || "").split(",").map(s => s.trim()).filter(Boolean)
   .map(s => { const [chat, thread] = s.split(":"); return { chat, thread: thread || "" }; });
 const API = t => `https://api.telegram.org/bot${TOKEN}/${t}`;
+// (2026-10-27) 봇을 실시간 봇 하나로 합치면서 22시대에 상시 루프와 같은 봇으로 동시에 보낸다 → 429면 retry_after만큼 기다렸다 재시도(최대 3회)
+async function post(method, makeBody, headers) {
+  for (let i = 0; ; i++) {
+    const r = await fetch(API(method), { method: "POST", ...(headers ? { headers } : {}), body: makeBody() });
+    const j = await r.json();
+    if (j.ok || j.error_code !== 429 || i >= 3) return j;
+    await new Promise(res => setTimeout(res, ((j.parameters?.retry_after || 5) + 1) * 1000));
+  }
+}
 
 export async function sendMessage(text) {
   let last;
   for (const { chat, thread } of CHATS) {
-    const r = await fetch(API("sendMessage"), {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const j = await post("sendMessage", () => JSON.stringify({
         chat_id: chat, text, parse_mode: "HTML", disable_web_page_preview: true,
         ...(thread ? { message_thread_id: Number(thread) } : {}),
-      }),
-    });
-    const j = await r.json();
+      }), { "Content-Type": "application/json" });
     if (!j.ok) throw new Error(`sendMessage 실패(${chat}): ` + JSON.stringify(j));
     last = j;
   }
@@ -30,14 +35,15 @@ export async function sendDocument(filePath, caption = "") {
   const buf = readFileSync(filePath);
   let last;
   for (const { chat, thread } of CHATS) {
-    const form = new FormData();
-    form.append("chat_id", chat);
-    if (thread) form.append("message_thread_id", thread);
-    form.append("caption", caption);
-    form.append("parse_mode", "HTML");
-    form.append("document", new Blob([buf]), basename(filePath));
-    const r = await fetch(API("sendDocument"), { method: "POST", body: form });
-    const j = await r.json();
+    const j = await post("sendDocument", () => {
+      const form = new FormData();
+      form.append("chat_id", chat);
+      if (thread) form.append("message_thread_id", thread);
+      form.append("caption", caption);
+      form.append("parse_mode", "HTML");
+      form.append("document", new Blob([buf]), basename(filePath));
+      return form;
+    });
     if (!j.ok) throw new Error(`sendDocument 실패(${chat}): ` + JSON.stringify(j));
     last = j;
   }

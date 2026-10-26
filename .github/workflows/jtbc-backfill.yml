@@ -20,7 +20,7 @@ jobs:
       - name: 보충 발송 (로컬 PC가 올린 nightly/jtbc-latest.json 사용 — 브라우저 불필요)
         working-directory: nightly
         env:
-          TG_BOT_TOKEN: ${{ secrets.TG_NIGHTLY_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}   # 10/27 실시간 봇 하나로 통합
           TG_CHAT_ID: ${{ secrets.TG_NIGHTLY_CHAT || secrets.TG_CHAT_ID }}
           WANT_DATE: ${{ inputs.want }}
         run: node jtbc-backfill.mjs

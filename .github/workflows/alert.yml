@@ -35,11 +35,9 @@ jobs:
           NAVER_ID: ${{ secrets.NAVER_ID }}
           NAVER_SECRET: ${{ secrets.NAVER_SECRET }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_BRIEF_TOKEN: ${{ secrets.TG_BRIEF_TOKEN }}
+          # 10/27 봇 통합: 브리핑·입법예고·의안 전용 봇을 넘기지 않으면 alert.mjs가 실시간 봇(TG_BOT_TOKEN)으로 보낸다
           TG_TOPIC_GROUP: ${{ secrets.TG_TOPIC_GROUP }}
           TG_TOPICS: ${{ secrets.TG_TOPICS }}
-          TG_ORD_TOKEN: ${{ secrets.TG_ORD_TOKEN }}
-          TG_BILL_TOKEN: ${{ secrets.TG_BILL_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           BRIEF_NOW: ${{ inputs.brief_now == 'true' && '1' || '' }}
           POLL_INTERVAL_SEC: "120"
