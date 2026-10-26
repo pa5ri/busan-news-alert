@@ -42,7 +42,7 @@ export async function interviewCheck(naverUrl, srcName = "") {
     body = body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<\/p>/gi, "\n");
     if (!body.trim()) return { ok: false, why: "본문 추출 실패(자사 링크)" };
   }
-  const txt = (summary + "\n" + body).replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/&quot;|&#034;/g, '"').replace(/&nbsp;/g, " ");
+  const txt = (summary + "\n" + body).replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&quot;/g, '"').replace(/&nbsp;/g, " ");
   // (10/20) 인터뷰 대상이 시장인지부터 — 본문에 전재수·부산시장이 없으면 누구의 인터뷰든 우리 코너가 아니다.
   // 사례: 국제신문 「“광안리 해변 보행공간 개선…”」(수영구청장 취임 100일 인터뷰)가 '제목 전체 인용문' 가드 + 자사 인터뷰 규칙으로 들어옴.
   if (!/전재수|부산시장/.test(txt)) return { ok: false, why: "시장 인터뷰 아님(본문에 시장 언급 없음)" };
@@ -59,6 +59,12 @@ export async function interviewCheck(naverUrl, srcName = "") {
   // (10/19) 짧은 지면 문답: 질문 줄 바로 다음 줄이 따옴표로 시작하는 답변(40자 이상)인 '문답 쌍'이 3개 이상 — 서울신문 「해양수도 부산 위한 또 하나의 초석」(질문 3개)
   const pairs = lines.filter((l, i) => isQ(l) && i + 1 < lines.length && /^["“]/.test(lines[i + 1]) && lines[i + 1].length >= 40).length;
   if (pairs >= 3) return { ok: true, why: `문답 쌍 ${pairs}개` };
+  // (10/27) 시사주간지형 문답: 질문이 기호 없이 '?'로 끝나는 짧은 한 줄이고, 바로 다음 줄이 따옴표 없는 긴 답변 문단(60자↑)인 쌍이 4개↑
+  //   사례: 시사IN 「“산업은행 오면 뭐가 달라지나?” 전재수 부산시장의 답변」(10/27, 질문 12개) — 기존 규칙에선 '받아쓰기 보도'로 빠짐
+  const qmark = lines.filter((l, i) => l.length >= 8 && l.length <= 160 && /\?\s*$/.test(l) && i + 1 < lines.length && !/\?\s*$/.test(lines[i + 1]) && lines[i + 1].length >= 60).length;
+  // 라디오 대담·패널 토론(타인이 답하는 문답)도 같은 모양이라, 이 형식은 제목에 시장이 있을 때만 인정(저장본 5,034건 회귀: 5건 중 시장 아닌 4건 제외)
+  const pageTitle = ((html.match(/<meta property="og:title" content="([^"]+)"/) || [])[1] || (html.match(/<title>([^<]+)/) || [])[1] || "");
+  if (qmark >= 4 && /전재수|부산시장/.test(pageTitle)) return { ok: true, why: `물음표 문답 ${qmark}쌍` };
   // (10/21) 인터뷰 '원문'이 실려 있어야 한다 — 예고·행사 기사(연합 「어린이신문 기자단, 전재수 시장 인터뷰」: "대면 인터뷰를 한다고 밝혔다")는 제외.
   // 원문의 증거 = 문답 줄/쌍(위) 또는 시장 발언 인용 덩어리(20자 이상 따옴표)가 충분히 많을 것.
   const quotes = (txt.match(/[“"][^”"\n]{20,}[”"]/g) || []).length;
