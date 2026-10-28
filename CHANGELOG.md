@@ -8,6 +8,11 @@
 
 ---
 
+## 2026-10-28 자동화 감시 보고는 텔레그램 발송 중단
+- **무엇을**: relay-reports.yml — `reports/*_watch.md`(「⚠ 자동화 감시」)는 중계 대상에서 뺀다. 파일은 리포에 계속 쌓이고, 필요하면 `gh workflow run relay-reports.yml -f file=reports/…_watch.md`로 한 건만 보낼 수 있다.
+- **왜**: 사용자 — 「변경 이력」 방에 매일 올라오는 감시 보고를 계속 지우고 있음.
+- **영향**: 변경 이력 방에는 CHANGELOG 항목과 다른 참모 보고만 온다.
+
 ## 2026-10-27 텔레그램 봇 5개 → 1개 통합
 - **무엇을**: 브리핑(@busan_brief_bot)·밤 TV 보고(@busan_newsmon_bot)·입법예고(@busan_ordinance_bot)·의안(@busan_bills_bot) 발송을 실시간 봇(@busan_live_bot) 하나로. alert.yml에서 전용 토큰 3개를 빼 alert.mjs 폴백을 타게 했고, nightly·nightly-retry·jtbc-backfill 워크플로는 TG_BOT_TOKEN 사용. nightly/telegram.mjs에 429(retry_after) 재시도 3회 추가.
 - **왜**: 사용자 — 그룹에 「부산 통합 모니터링 봇」이 여러 개라 많아 보임. 5개 모두 실제 발송 중이었지만 역할 분리 이점보다 정돈이 낫다는 판단.

@@ -29,7 +29,8 @@ jobs:
           TG_TOPICS: ${{ secrets.TG_TOPICS }}
           ONE: ${{ github.event.inputs.file }}
         run: |
-          if [ -n "$ONE" ]; then files="$ONE"; else files=$(git diff --name-only HEAD~1 HEAD -- 'reports/*.md' 'reports/**/*.md' | grep -v README || true); fi
+          # 10/28 자동화 감시(*_watch.md)는 텔레그램으로 보내지 않는다 — 사용자가 매일 지우던 보고. 파일은 리포에 그대로 쌓인다(수동 발송은 ONE으로 가능).
+          if [ -n "$ONE" ]; then files="$ONE"; else files=$(git diff --name-only HEAD~1 HEAD -- 'reports/*.md' 'reports/**/*.md' | grep -v README | grep -v '_watch\.md$' || true); fi
           [ -z "$files" ] && { echo "보낼 파일 없음"; exit 0; }
           for f in $files; do [ -f "$f" ] || continue; node -e '
             const fs=require("fs"); const f=process.argv[1];
