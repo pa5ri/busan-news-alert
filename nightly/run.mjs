@@ -61,4 +61,38 @@ if (KW.length && kwHits.length) {
   if (kwHits.length > 25) lines.push(`… 외 ${kwHits.length - 25}건 (엑셀 탭 참조)`);
   await sendMessage(`🔎 <b>${KW.join("·")} 언급 기사 (${kwHits.length}건)</b>\n${lines.join("\n")}`);
 }
+
+// (2026-11-02) 언급 기사 가운데 시장 인터뷰를 〈인터뷰〉 방으로 교차 발송.
+// 계기: 10/31 JTBC 뉴스룸 「[인터뷰] '부캉이' 힘입어 전재수…」 — 이 보고엔 '언급 1건'으로 잡혔는데, 실시간 루프는 본문 조회 실패로 인터뷰 방에서 빠뜨림.
+// 실시간 루프가 이미 보낸 링크(state.json ivSent)는 건너뛴다. 실패해도 밤 보고에는 영향이 없다.
+try { await crossInterview(kwHits); } catch (e) { console.log("인터뷰 교차 확인 실패:", e.message); }
 console.log("완료:", file);
+
+async function crossInterview(hits) {
+  const group = process.env.TG_TOPIC_GROUP; let topics = {};
+  try { topics = JSON.parse(process.env.TG_TOPICS || "{}"); } catch {}
+  if (!group || !topics["인터뷰"] || !hits.length) return;
+  const { interviewCheck } = await import("../interview.mjs");
+  let sent = new Set(); try { sent = new Set(JSON.parse(readFileSync("../state.json", "utf8")).ivSent || []); } catch {}
+  // 방송사 원문 링크 → 실시간 루프가 쌓는 전재수 색인(archive/jeon)에서 같은 기사의 네이버 링크를 찾는다(JTBC 등은 원문 본문이 스크립트로 그려져 못 읽음)
+  const jeon = [];
+  for (const dd of [dDash, new Date(d.getTime() + 86400e3).toISOString().slice(0, 10)])
+    try { for (const l of readFileSync(`../archive/jeon/${dd}.jsonl`, "utf8").split("\n")) if (l) jeon.push(JSON.parse(l)); } catch {}
+  const ids = u => new Set((String(u).match(/[A-Za-z]{0,3}\d{6,}/g) || []));
+  const naverOf = u => { const a = ids(u); if (!a.size) return ""; const r = jeon.find(j => [...ids(j.url)].some(x => a.has(x))); return r && /n\.news\.naver\.com/.test(r.link || "") ? r.link : ""; };
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const seenNow = new Set();
+  for (const h of hits) {
+    const nv = naverOf(h.url); const link = nv || h.url;
+    const key = link.replace(/[?#].*$/, ""), orig = String(h.url || "").replace(/[?#].*$/, "");
+    if (!key || seenNow.has(key) || [...sent].some(s => s.replace(/[?#].*$/, "") === key || (orig && s.includes(orig)))) continue;
+    seenNow.add(key);
+    const c = await interviewCheck(link, String(h.src).split(" ")[0]);
+    console.log(`  인터뷰 교차 확인: ${String(h.title).slice(0, 40)} → ${c.ok ? "인터뷰" : "아님"}(${c.why})`);
+    if (!c.ok || process.env.DRY_IV) continue;
+    const text = `🎤 <b>[인터뷰 · 밤 보고 교차 확인]</b> <b>${esc(h.title)}</b>\n<i>${esc(h.src)}</i>\n${link}`;
+    const r = await fetch(`https://api.telegram.org/bot${process.env.TG_BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: group, message_thread_id: topics["인터뷰"], text, parse_mode: "HTML" }) }).then(r => r.json());
+    console.log(`  → 인터뷰 방 ${r.ok ? "발송" : "실패: " + r.description}`);
+  }
+}

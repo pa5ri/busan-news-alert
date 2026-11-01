@@ -234,6 +234,8 @@ async function tgSend(body, label) {
 
 // 분야를 지정해 발송 (토픽 설정이 있으면 그 토픽으로, 없으면 기본 방으로)
 async function sendCat(cat, text) {
+  // (11/2) 인터뷰 방에 보낸 링크를 남긴다 — 밤 TV 보고(nightly/run.mjs)의 교차 확인이 같은 기사를 두 번 보내지 않게
+  if (cat === "인터뷰") state.ivSent = [...(state.ivSent || []), ...(text.match(/https?:\/\/[^\s<"]+/g) || [])].slice(-300);
   if (TOPIC_GROUP && TOPICS[cat])
     return tgSend({ chat_id: TOPIC_GROUP, message_thread_id: TOPICS[cat], text, parse_mode: "HTML" }, cat);
   return send(text);
@@ -492,6 +494,7 @@ function saveState() {
     riskVer: state.riskVer || 0,
     interviewBackfillVer: state.interviewBackfillVer || 0,
     ivRetry: (state.ivRetry || []).slice(-30),
+    ivSent: (state.ivSent || []).slice(-300),
     scoopSeen: (state.scoopSeen || []).slice(-6000),
     scoopInit: !!state.scoopInit,
     scoopDailyFor: state.scoopDailyFor || "",
