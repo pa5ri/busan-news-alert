@@ -491,6 +491,7 @@ function saveState() {
     riskInit: !!state.riskInit,
     riskVer: state.riskVer || 0,
     interviewBackfillVer: state.interviewBackfillVer || 0,
+    ivRetry: (state.ivRetry || []).slice(-30),
     scoopSeen: (state.scoopSeen || []).slice(-6000),
     scoopInit: !!state.scoopInit,
     scoopDailyFor: state.scoopDailyFor || "",
@@ -582,12 +583,14 @@ async function runOnce() {
     let special = specialKind(rec);            // 인터뷰(시장)·르포·기고 — 전용 방 추가 발송
     // 제목에 '인터뷰'가 없는 시장 문답 기사(2026-10-06 실측: 머니투데이 「"되돌릴 수 없는 해양수도…"」)는 본문을 읽어 판별
     if (!special && RE_IV_TITLE.test(title) && /n\.news\.naver\.com/.test(it.link || "")) {   // 10/19: 제목 전체가 인용문인 기사도 본문을 읽는다
-      try { if (await isInterviewBody(it.link, name)) { special = "인터뷰"; console.log(`  본문 판별 인터뷰: ${title.slice(0, 40)}`); } } catch {}
+      try { const c0 = await interviewCheck(it.link, name);
+        if (c0.ok) { special = "인터뷰"; console.log(`  본문 판별 인터뷰: ${title.slice(0, 40)}`); }
+        else if (c0.fetchFail) queueIvRetry(title, it.link, name); } catch {}
     }
     // (10/20) 제목 규칙으로 잡힌 인터뷰도 본문에서 시장이 인터뷰 주체인지 확인 — 제목에 시장이 거론만 된 타인 인터뷰 제외(사용자 기준: 전재수 시장이 주체로서 한 인터뷰만)
     if (special === "인터뷰") {   // 10/21: 네이버 링크 없는 자사 기사도 원문 링크로 확인(국제뉴스 어린이기자단 예고 기사가 이 틈으로 들어옴)
       const ivLink = /n\.news\.naver\.com/.test(it.link || "") ? it.link : (it.originallink || it.link);
-      try { const c = await interviewCheck(ivLink, name); if (!c.ok) { special = null; console.log(`  인터뷰 제외(${c.why}): ${title.slice(0, 40)}`); } } catch {}   // 10/21: 원문 없는 예고·요약 보도도 제외(사용자 기준)
+      try { const c = await interviewCheck(ivLink, name); if (!c.ok) { special = null; if (c.fetchFail) queueIvRetry(title, ivLink, name); console.log(`  인터뷰 제외(${c.why}${c.fetchFail ? " → 재확인 대기열" : ""}): ${title.slice(0, 40)}`); } } catch {}   // 10/21: 원문 없는 예고·요약 보도도 제외(사용자 기준)
     }
     const chief = partyChief(rec);             // 여야 시당위원장(박홍배·이성권) — 전용 방 추가 발송
     const council = councilNews(rec);          // 부산시의회·시의원 — 전용 방 추가 발송
@@ -1136,6 +1139,27 @@ async function sendContextBrief(dest, msgs, buttons, dateStr) {
   }
 }
 
+// ---- 인터뷰 재확인 대기열(2026-11-01): 본문 조회가 실패한 인터뷰 후보는 버리지 않고 10분 간격으로 최대 6번 다시 읽는다 ----
+// 계기: JTBC 「[인터뷰] '부캉이' 힘입어 전재수…」(10/31 20:43)가 러너의 일시 조회 실패 한 번에 '인터뷰 아님'으로 빠짐.
+function queueIvRetry(t, link, name) {
+  state.ivRetry = (state.ivRetry || []).filter(x => x.link !== link).concat({ t, link, name, n: 0, last: Date.now() }).slice(-30);
+}
+async function maybeIvRetry() {
+  const q = state.ivRetry || []; if (!q.length || !(TOPIC_GROUP && TOPICS["인터뷰"])) return;
+  const keep = [];
+  for (const x of q) {
+    if (Date.now() - x.last < 10 * 60e3) { keep.push(x); continue; }
+    let c = { ok: false, fetchFail: true }; try { c = await interviewCheck(x.link, x.name); } catch {}
+    if (c.ok) {
+      const ok = await sendCat("인터뷰", `${SPECIAL_EMOJI["인터뷰"]} <b>[인터뷰 · 재확인]</b> <b>${esc(x.t)}</b>\n<i>${esc(x.name)}</i>\n${x.link}`);
+      console.log(`🎤 인터뷰 재확인 → ${ok ? "발송" : "발송 실패"}: ${x.t.slice(0, 40)}`);
+      if (!ok) keep.push({ ...x, last: Date.now() });
+    } else if (c.fetchFail && x.n + 1 < 6) keep.push({ ...x, n: x.n + 1, last: Date.now() });
+    else console.log(`🎤 인터뷰 재확인 종료(${c.why || "조회 실패 6회"}): ${x.t.slice(0, 40)}`);
+  }
+  state.ivRetry = keep;
+}
+
 // ---- 인터뷰 소급(2026-10-06, 1회): 최근 14일 전재수 색인에서 제목에 '인터뷰'가 없는 시장 발언형 기사의 본문을 읽어 인터뷰면 인터뷰 방에 ----
 // 제목 규칙만으로는 놓친 문답체 인터뷰(머니투데이·뉴시스 취임 100일, 노컷 라디오 전문)를 채운다. 실측 39건 조회 → 3건.
 async function maybeInterviewBackfill() {
@@ -1149,7 +1173,8 @@ async function maybeInterviewBackfill() {
     if (!existsSync(f)) continue;
     for (const l of readFileSync(f, "utf8").split("\n")) {
       if (!l) continue; let r; try { r = JSON.parse(l); } catch { continue; }
-      if (!RE_IV_TITLE.test(r.t) || specialKind({ t: r.t }) || !/n\.news\.naver\.com/.test(r.link || "")) continue;
+      const missed = ivv === 4 && /437\/0000518527/.test(r.link || "");   // 5차: 10/31 조회 실패로 빠진 JTBC [인터뷰] 1건(로그 확인분)만 제목 규칙 기사여도 포함
+      if (!missed && (!RE_IV_TITLE.test(r.t) || specialKind({ t: r.t }) || !/n\.news\.naver\.com/.test(r.link || ""))) continue;
       const k = r.t.replace(/\s/g, "").slice(0, 20); if (seenT.has(k)) continue; seenT.add(k);
       cands.push(r);
     }
@@ -1158,7 +1183,7 @@ async function maybeInterviewBackfill() {
   for (const r of cands.sort((a, b) => new Date(a.pub) - new Date(b.pub))) {
     const { name } = pressInfo(r.url || r.link);
     let chk = { ok: false }; try { chk = await interviewCheck(r.link, name); } catch {}
-    if (!chk.ok || (ivv === 1 && !/자사 방송/.test(chk.why)) || (ivv === 2 && !/문답 쌍/.test(chk.why)) || (ivv === 3 && !/물음표 문답/.test(chk.why)) || (ivv === 4 && !/자사 서술형/.test(chk.why))) continue;   // 2차·3차는 그 회차의 새 기준으로 잡히는 것만
+    if (!chk.ok || (ivv === 1 && !/자사 방송/.test(chk.why)) || (ivv === 2 && !/문답 쌍/.test(chk.why)) || (ivv === 3 && !/물음표 문답/.test(chk.why)) || (ivv === 4 && !/자사 서술형/.test(chk.why) && !/437\/0000518527/.test(r.link || ""))) continue;   // 2차·3차는 그 회차의 새 기준으로 잡히는 것만
 
     const d = new Date(new Date(r.pub).getTime() + 9 * 3600e3).toISOString().slice(5, 10).replace("-", "/");
     if (!await sendCat("인터뷰", `${SPECIAL_EMOJI["인터뷰"]} <b>[인터뷰 · 소급 ${d}]</b> <b>${esc(r.t)}</b>\n<i>${esc(name)}</i>\n${r.link}`)) break;
@@ -1566,6 +1591,7 @@ if (intervalSec > 0 && durationMin > 0) {
     try { await maybeAgendaReview(); } catch (e) { console.error("시책 점검 오류:", e.message); }
     try { await maybeRiskBackfill(); } catch (e) { console.error("리스크 소급 오류:", e.message); }
     try { await maybeInterviewBackfill(); } catch (e) { console.error("인터뷰 소급 오류:", e.message); }
+    try { await maybeIvRetry(); } catch (e) { console.error("인터뷰 재확인 오류:", e.message); }
     // 부산시의회 의정 체크 — 2026-09-19 클라우드 복귀(러너에서 200 응답 확인, 그전엔 해외 IP 차단으로 로컬 PC 전담).
     // 30분 간격·24시간. 차단이 재발하면 조용히 멈추므로 6시간 연속 실패 시 입법예고 방에 경보 1회.
     if (Date.now() - lastOrdCheck > 30 * 60 * 1000) {

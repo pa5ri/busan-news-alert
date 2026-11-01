@@ -14,7 +14,7 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 export const RE_MAYOR_QUOTE = /(전재수|부산시장)[^"“”']{0,25}["“][^"”]{4,}["”]|["“][^"”]{4,}["”][^"“”']{0,25}(전재수|부산시장)/;
 /** 전재수 색인 기사 가운데 본문을 읽어 볼 제목: 시장 이름+인용, 또는 제목 전체가 인용문(「“해양수도 부산 위한 또 하나의 초석”」 서울신문 10/19 — 이름 없이 발언만 뽑은 지면 문답) */
 // (11/1) 네이버 검색 API는 긴 제목을 '...'로 잘라 닫는 따옴표가 사라진다 — 뉴스1 「전재수 "170만 명 불러모은 부캉이 보고 5만 석 돔아레나 자신감 얻었죠...」 → 잘린 인용도 인정
-export const RE_IV_TITLE = /(전재수|부산시장)[^"“”']{0,25}["“][^"”]{4,}["”]|(전재수|부산시장)[^"“”']{0,25}["“][^"”]{8,}(\.{3}|…)\s*$|["“][^"”]{4,}["”][^"“”']{0,25}(전재수|부산시장)|^\s*["“][^"”]{6,}["”]\s*$/;
+export const RE_IV_TITLE = /(전재수|부산시장)[^"“”']{0,25}["“][^"”]{4,}["”]|(전재수|부산시장)[^"“”']{0,25}["“][^"”]{8,}(\.{3}|…)\s*$|["“][^"”]{4,}["”][^"“”']{0,25}(전재수|부산시장)|^\s*["“][^"”]{6,}["”]\s*(\.{3}|…|\[[^\]]{1,8}\])?\s*$/;   // 11/1: 인용 뒤 '...'·[人터뷰] 꼬리(헤럴드경제 10/28)
 
 // 매체 → 그 매체의 방송·채널 표기(본문에서 "○○ 라디오/유튜브/TV … 출연·인터뷰"로 나오면 자사 인터뷰)
 const OWN_CHANNEL = {
@@ -28,13 +28,18 @@ export async function interviewCheck(naverUrl, srcName = "") {
   // (10/21) 네이버 링크가 없는 자사 기사(국제뉴스 등)도 본문을 읽는다 — 아니면 제목 규칙만으로 통과해 예고 기사가 올라온다.
   const isNaver = /n\.news\.naver\.com\/(mnews\/)?article\//.test(String(naverUrl));
   if (!/^https?:\/\//.test(String(naverUrl))) return { ok: false, why: "링크 없음" };
-  const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 10000);
-  let html;
-  try {
-    const r = await fetch(naverUrl, { headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" }, signal: ac.signal });
-    if (!r.ok) return { ok: false, why: "HTTP " + r.status };
-    html = await r.text();
-  } catch (e) { return { ok: false, why: "조회 실패" }; } finally { clearTimeout(to); }
+  // (11/1) 한 번 실패로 끝내지 않는다 — JTBC 「[인터뷰] '부캉이' 힘입어 전재수…」(10/31)가 러너의 일시 조회 실패 한 번에 '인터뷰 아님'으로 버려짐. 15초 × 최대 3회.
+  let html, lastWhy = "조회 실패";
+  for (let i = 0; i < 3 && html === undefined; i++) {
+    if (i) await new Promise(r => setTimeout(r, 3000 * i));
+    const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 15000);
+    try {
+      const r = await fetch(naverUrl, { headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" }, signal: ac.signal });
+      if (r.ok) html = await r.text();
+      else { lastWhy = "HTTP " + r.status; if (r.status < 500 && r.status !== 429) break; }
+    } catch (e) { lastWhy = "조회 실패"; } finally { clearTimeout(to); }
+  }
+  if (html === undefined) return { ok: false, why: lastWhy, fetchFail: true };
   let body = isNaver ? (html.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1] || "" : "";
   const summary = isNaver ? (html.match(/<strong class="media_end_summary">([\s\S]*?)<\/strong>/) || [])[1] || "" : "";
   if (!isNaver) {
@@ -43,6 +48,12 @@ export async function interviewCheck(naverUrl, srcName = "") {
     if (!body.trim()) return { ok: false, why: "본문 추출 실패(자사 링크)" };
   }
   const txt = (summary + "\n" + body).replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&quot;/g, '"').replace(/&nbsp;/g, " ");
+  const pageTitle = ((html.match(/<meta property="og:title" content="([^"]+)"/) || [])[1] || (html.match(/<title>([^<]+)/) || [])[1] || "");
+  return judgeText(txt, pageTitle, srcName);
+}
+
+/** 본문 텍스트만으로 판별(저장 본문 DB 회귀·소급에도 쓴다) → { ok, why } */
+export function judgeText(txt, pageTitle = "", srcName = "") {
   // (10/20) 인터뷰 대상이 시장인지부터 — 본문에 전재수·부산시장이 없으면 누구의 인터뷰든 우리 코너가 아니다.
   // 사례: 국제신문 「“광안리 해변 보행공간 개선…”」(수영구청장 취임 100일 인터뷰)가 '제목 전체 인용문' 가드 + 자사 인터뷰 규칙으로 들어옴.
   if (!/전재수|부산시장/.test(txt)) return { ok: false, why: "시장 인터뷰 아님(본문에 시장 언급 없음)" };
@@ -63,7 +74,6 @@ export async function interviewCheck(naverUrl, srcName = "") {
   //   사례: 시사IN 「“산업은행 오면 뭐가 달라지나?” 전재수 부산시장의 답변」(10/27, 질문 12개) — 기존 규칙에선 '받아쓰기 보도'로 빠짐
   const qmark = lines.filter((l, i) => l.length >= 8 && l.length <= 160 && /\?\s*$/.test(l) && i + 1 < lines.length && !/\?\s*$/.test(lines[i + 1]) && lines[i + 1].length >= 60).length;
   // 라디오 대담·패널 토론(타인이 답하는 문답)도 같은 모양이라, 이 형식은 제목에 시장이 있을 때만 인정(저장본 5,034건 회귀: 5건 중 시장 아닌 4건 제외)
-  const pageTitle = ((html.match(/<meta property="og:title" content="([^"]+)"/) || [])[1] || (html.match(/<title>([^<]+)/) || [])[1] || "");
   if (qmark >= 4 && /전재수|부산시장/.test(pageTitle)) return { ok: true, why: `물음표 문답 ${qmark}쌍` };
   // (10/21) 인터뷰 '원문'이 실려 있어야 한다 — 예고·행사 기사(연합 「어린이신문 기자단, 전재수 시장 인터뷰」: "대면 인터뷰를 한다고 밝혔다")는 제외.
   // 원문의 증거 = 문답 줄/쌍(위) 또는 시장 발언 인용 덩어리(20자 이상 따옴표)가 충분히 많을 것.
