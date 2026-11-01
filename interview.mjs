@@ -7,12 +7,14 @@
 //       ⑤ (10/8) 받아쓰기 표현이어도 **그 매체가 자사 방송·유튜브 출연을 쓴 기사**면 인터뷰 — 예: 노컷뉴스가 부산CBS 유튜브 '로컬디스크C' 출연을 보도.
 //   라디오 출연 발언을 '다른' 매체가 받아쓴 기사(14일 실측 7건, 「전재수 "부캉이 예뻐죽겠다"」류)는 발언 보도라 제외.
 // 비용: 해당 제목만(하루 5~15건), 네이버 링크만, 10초 제한. 실패하면 인터뷰 아님으로 둔다.
+import { extract } from "./bodytext.mjs";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
 /** 본문을 읽어 볼 가치가 있는 제목인가 — 시장 이름/직함 + 직접 인용 */
 export const RE_MAYOR_QUOTE = /(전재수|부산시장)[^"“”']{0,25}["“][^"”]{4,}["”]|["“][^"”]{4,}["”][^"“”']{0,25}(전재수|부산시장)/;
 /** 전재수 색인 기사 가운데 본문을 읽어 볼 제목: 시장 이름+인용, 또는 제목 전체가 인용문(「“해양수도 부산 위한 또 하나의 초석”」 서울신문 10/19 — 이름 없이 발언만 뽑은 지면 문답) */
-export const RE_IV_TITLE = /(전재수|부산시장)[^"“”']{0,25}["“][^"”]{4,}["”]|["“][^"”]{4,}["”][^"“”']{0,25}(전재수|부산시장)|^\s*["“][^"”]{6,}["”]\s*$/;
+// (11/1) 네이버 검색 API는 긴 제목을 '...'로 잘라 닫는 따옴표가 사라진다 — 뉴스1 「전재수 "170만 명 불러모은 부캉이 보고 5만 석 돔아레나 자신감 얻었죠...」 → 잘린 인용도 인정
+export const RE_IV_TITLE = /(전재수|부산시장)[^"“”']{0,25}["“][^"”]{4,}["”]|(전재수|부산시장)[^"“”']{0,25}["“][^"”]{8,}(\.{3}|…)\s*$|["“][^"”]{4,}["”][^"“”']{0,25}(전재수|부산시장)|^\s*["“][^"”]{6,}["”]\s*$/;
 
 // 매체 → 그 매체의 방송·채널 표기(본문에서 "○○ 라디오/유튜브/TV … 출연·인터뷰"로 나오면 자사 인터뷰)
 const OWN_CHANNEL = {
@@ -36,10 +38,8 @@ export async function interviewCheck(naverUrl, srcName = "") {
   let body = isNaver ? (html.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1] || "" : "";
   const summary = isNaver ? (html.match(/<strong class="media_end_summary">([\s\S]*?)<\/strong>/) || [])[1] || "" : "";
   if (!isNaver) {
-    // 자사 CMS 공통 본문 틀(ndsoft article-view-content-div 등) → 없으면 30자 이상 <p> 단락을 이어 붙인다
-    body = (html.match(/<article[^>]*id="(?:article-view-content-div|articleBody|article_body|newsContent|textBody)"[^>]*>([\s\S]*?)<\/article>/) || [])[1]
-      || (html.match(/<p[^>]*>[\s\S]*?<\/p>/g) || []).filter(p => p.replace(/<[^>]+>/g, "").trim().length >= 30).join("\n");   // div 틀은 안쪽 </div>에서 잘리므로 단락 모음으로
-    body = body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<\/p>/gi, "\n");
+    // (11/1) 자사 링크는 본문 DB와 같은 공용 추출기(bodytext.mjs)로 — 예전 <article>·<p> 방식은 뉴스1(스크립트 속 본문)을 못 읽었다
+    body = extract(html, naverUrl).body.replace(/\n/g, "<br>");
     if (!body.trim()) return { ok: false, why: "본문 추출 실패(자사 링크)" };
   }
   const txt = (summary + "\n" + body).replace(/<br\s*\/?>/g, "\n").replace(/<[^>]+>/g, "").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n)).replace(/&quot;/g, '"').replace(/&nbsp;/g, " ");
@@ -71,6 +71,12 @@ export async function interviewCheck(naverUrl, srcName = "") {
   const preview = /인터뷰(를|을)?\s?(한다|가진다|진행한다|할 예정|열린다|연다)|인터뷰가 (열|진행)|묻고 답하는 시간을 갖는다|질문할 예정/.test(txt);
   if (preview && quotes < 5) return { ok: false, why: "인터뷰 예고·행사 보도(원문 없음)" };
   if (/일문일답|대담/.test(txt) && quotes >= 3) return { ok: true, why: `일문일답·대담 표기(인용 ${quotes}개)` };
+  // (11/1) 서술형 자사 인터뷰: "전 시장은 30일 뉴스1과의 인터뷰에서 …"(뉴스1 초대석) — '인터뷰에서'라 받아쓰기로 빠지던 것.
+  //   그 매체 이름(또는 본지)과의 인터뷰라고 스스로 밝히고 시장 발언 인용이 5개 이상이면 인터뷰. 다른 매체 인터뷰를 받아쓴 기사는 매체명이 달라 걸리지 않는다.
+  //   주어가 시장인 문장이어야 한다("전 시장은 30일 뉴스1과의 인터뷰에서") — 저장본 회귀에서 박형준·시의원·부시장 인터뷰가 같은 표현으로 걸림.
+  const srcRe = String(srcName).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  //   '부산시장 후보'·'박 전 시장'·'전 부산시장'(박형준)은 주어로 치지 않는다.
+  if (srcName && quotes >= 5 && new RegExp(`(전재수|(?<![가-힣] )전 시장|(?<!전 )부산시장(?! ?후보))[^.\\n"“]{0,40}(${srcRe}|본지|본사)\\s?(와|과)의?\\s?(단독\\s?|신년\\s?|특별\\s?|취임\\s?\\S+\\s?)?(인터뷰|대담)`).test(txt)) return { ok: true, why: `자사 서술형 인터뷰(${srcName}, 인용 ${quotes}개)` };
   const n = (txt.match(/인터뷰/g) || []).length;
   const reportish = /인터뷰(에서|를 통해|에 출연|에 나와|서 밝혔)|(출연|나와)\s?(해|서)?[^.]{0,30}(말했|밝혔|강조했)/.test(txt);
   if (n && !reportish && quotes >= 5) return { ok: true, why: `'인터뷰' ${n}회·인용 ${quotes}개` };

@@ -17,16 +17,9 @@ const args = process.argv.slice(2);
 const ALL = args.includes("--all");
 const LIMIT = Number((args[args.indexOf("--limit") + 1] || "").match(/^\d+$/) ? args[args.indexOf("--limit") + 1] : 0) || Infinity;
 const DAYS = Number((args[args.indexOf("--days") + 1] || "").match(/^\d+$/) ? args[args.indexOf("--days") + 1] : 0) || 14;
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const log = (...a) => console.log(`[${new Date().toLocaleString("ko-KR")}]`, ...a);
-
-const decodeEnt = s => String(s).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n))
-  .replace(/&nbsp;/g, " ").replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&hellip;/g, "…").replace(/&middot;/g, "·")
-  .replace(/&lsquo;/g, "‘").replace(/&rsquo;/g, "’").replace(/&ldquo;/g, "“").replace(/&rdquo;/g, "”").replace(/&ndash;/g, "–").replace(/&mdash;/g, "—").replace(/&bull;|&bullet;/g, "•").replace(/&times;/g, "×").replace(/&copy;/g, "©").replace(/&uarr;/g, "↑").replace(/&darr;/g, "↓").replace(/&amp;/g, "&").replace(/&[a-z]{2,8};/g, " ");
-const toText = html => decodeEnt(String(html)
-  .replace(/<(script|style|noscript|iframe|figure|figcaption|button|form|aside)[\s\S]*?<\/\1>/gi, " ")
-  .replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h\d)>/gi, "\n").replace(/<[^>]+>/g, " "))
-  .replace(/[ \t ]+/g, " ").replace(/\s*\n\s*/g, "\n").replace(/\n{2,}/g, "\n").trim();
+// 추출기는 interview.mjs와 공용(11/1 bodytext.mjs로 이동 — 뉴스1 스크립트 속 본문 contentArrange 읽기 추가)
+import { fetchHtml, extract } from "../bodytext.mjs";
 
 if (!ALL) { try { execSync("git pull --rebase -q origin main", { cwd: ROOT, stdio: "ignore", timeout: 120000 }); } catch (e) { log("git pull 실패(계속 진행):", e.message.split("\n")[0]); } }
 if (!existsSync(DB)) mkdirSync(DB, { recursive: true });
@@ -34,49 +27,6 @@ const idxFile = resolve(OUT, "index.json"), failFile = resolve(OUT, "failed.json
 const idx = existsSync(idxFile) ? JSON.parse(readFileSync(idxFile, "utf8")) : {};
 const failed = existsSync(failFile) ? JSON.parse(readFileSync(failFile, "utf8")) : {};
 
-async function fetchHtml(url) {
-  const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 15000);
-  try {
-    const r = await fetch(url, { headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" }, redirect: "follow", signal: ac.signal });
-    if (!r.ok) return { err: "HTTP " + r.status };
-    const buf = new Uint8Array(await r.arrayBuffer());
-    let cs = ((r.headers.get("content-type") || "").match(/charset=([\w-]+)/i) || [])[1] || "";
-    if (!cs) { const head = new TextDecoder("latin1").decode(buf.slice(0, 4000)); cs = (head.match(/<meta[^>]+charset=["']?([\w-]+)/i) || [])[1] || "utf-8"; }
-    cs = /euc-?kr|ks_c_5601|cp949/i.test(cs) ? "euc-kr" : "utf-8";
-    let html; try { html = new TextDecoder(cs).decode(buf); } catch { html = new TextDecoder("utf-8").decode(buf); }
-    return { html };
-  } catch (e) { return { err: e.name === "AbortError" ? "시간 초과" : "조회 실패" }; } finally { clearTimeout(to); }
-}
-
-function extract(html, url) {
-  if (/n\.news\.naver\.com/.test(url)) {
-    const b = (html.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1];
-    const s = (html.match(/<strong class="media_end_summary">([\s\S]*?)<\/strong>/) || [])[1] || "";
-    if (b) return { method: "naver", body: toText((s ? s + "<br>" : "") + b) };
-  }
-  for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
-    try { const j = JSON.parse(m[1].trim()); const arr = [].concat(j, j["@graph"] || []);
-      const a = arr.find(x => x && typeof x.articleBody === "string" && x.articleBody.length > 200);
-      if (a) return { method: "jsonld", body: toText(a.articleBody) }; } catch {}
-  }
-  const ids = /<(div|article|section)[^>]*(?:id|class)="[^"]*(?:article-view-content-div|articleBody|article_body|article-body|news_body|newsContent|news_content|textBody|article_txt|view_con|view_content|cont_view|news_text|art_txt|article_view|articleView|newsct_article|story-news)[^"]*"[^>]*>/i;
-  const st = html.search(ids);
-  if (st >= 0) {
-    // 같은 태그 깊이를 세어 닫는 지점까지 자른다(안쪽 </div>에서 잘리지 않게)
-    const tag = html.slice(st).match(/^<(\w+)/)[1].toLowerCase(); const re = new RegExp(`<${tag}\\b|</${tag}>`, "gi"); re.lastIndex = st + 1; let depth = 1, m, end = -1;
-    while ((m = re.exec(html))) { depth += m[0][1] === "/" ? -1 : 1; if (depth === 0) { end = m.index; break; } }
-    const body = toText(html.slice(st, end > 0 ? end : st + 60000));
-    if (body.length > 200) return { method: "cms", body };
-  }
-  const art = (html.match(/<article[^>]*>([\s\S]*?)<\/article>/i) || html.match(/itemprop="articleBody"[^>]*>([\s\S]*?)<\/(div|section)>/i) || [])[1];
-  if (art && toText(art).length > 200) return { method: "article", body: toText(art) };
-  // <br>로만 이어진 본문(KNN·지역 방송 등): 20자↑ 텍스트 + <br>가 5번 이상 이어진 가장 긴 덩어리
-  const brs = [...html.matchAll(/(?:[^<>]{20,}(?:<br\s*\/?>\s*)+){3,}/gi)].map(m => m[0]).sort((a, b) => b.length - a.length)[0];
-  if (brs && toText(brs).length > 120) return { method: "br", body: toText(brs) };   // 단신(KNN 등)은 3줄·120자도 인정
-  const ps = (html.match(/<p[^>]*>[\s\S]*?<\/p>/gi) || []).map(toText).filter(t => t.length >= 30 && !/저작권|무단 ?전재|Copyright|구독|기자 ?=|ⓒ|로그아웃|회원탈퇴|전체기사/.test(t));
-  if (ps.join("").length > 200) return { method: "para", body: ps.join("\n") };
-  return { method: "none", body: "" };
-}
 
 // 대상 목록
 const since = Date.now() - DAYS * 86400e3;
