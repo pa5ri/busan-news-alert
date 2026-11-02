@@ -341,8 +341,11 @@ try {
         const box = a.closest('li,div') || a;
         const boxText = (box.textContent||'').replace(/\s+/g,' ');
         const id = (a.href.match(/news_id=(N\d+)/)||[])[1];
-        let t = (a.textContent||'').replace(/\s+/g,' ').trim().replace(/^(동영상 기사|알림|속보)\s*/,'');
+        // (11/3) <a> 안에 제목(strong.sub)+요약(span.read)+매체·날짜가 함께 있어 textContent엔 본문이 붙는다 → title 속성·strong.sub만 쓴다
+        let t = (a.getAttribute('title') || a.querySelector('strong.sub')?.textContent || a.textContent || '').replace(/\s+/g,' ').trim().replace(/^(동영상 기사|알림|속보)\s*/,'');
         if (!id || t.length <= 8 || m.has(id)) return;
+        // 부산 칸은 부산 기사만(10/27 사용자 기준) — 키워드 목록에 전국 날씨가 섞여 온다(「[날씨] 오늘 대체로 맑고 건조…」). 부산이 제목에 있는 날씨만 남긴다.
+        if (/^\[날씨\]/.test(t) && !/부산/.test(t)) return;
         let ok = boxText.includes(dDot);                          // 절대 표기 YYYY.MM.DD
         if (!ok) {
           const hr = boxText.match(/(\d+)\s*시간\s*전/);
