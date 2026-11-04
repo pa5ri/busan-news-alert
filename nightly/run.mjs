@@ -22,9 +22,9 @@ const fstamp = dDash.replace(/-/g,"");
 const byName = Object.fromEntries(sources.map(s => [s.source, s]));
 const central = ["KBS 뉴스9","MBC 뉴스데스크","SBS 8뉴스","JTBC 뉴스룸","TV조선 뉴스9"];
 const busan   = ["KBS부산 뉴스9","부산MBC 뉴스데스크","KNN 뉴스아이","SBS 부산관련"];
-const paper   = ["국제신문","부산일보","국제신문 내일 자","부산일보 오늘 게재"];
+const paper   = ["부산일보","국제신문"];   // (11/5) 「부산 지면」 방과 같은 그날 자 실제 지면만
 const cnt = n => byName[n]?.items.length || 0;
-const total = [...central, ...busan, ...paper].reduce((a,n)=>a+cnt(n), 0);   // 지면은 오늘 자 지면 + 홈 게재 예고(서로 중복 제거됨)
+const total = [...central, ...busan, ...paper].reduce((a,n)=>a+cnt(n), 0);
 const line = n => {
   const s = byName[n];
   const warn = s?.note && s.items.length === 0 && !/\(정상\)$/.test(s.note) ? " ⚠" : "";
@@ -87,7 +87,7 @@ async function crossInterview(hits) {
     const key = link.replace(/[?#].*$/, ""), orig = String(h.url || "").replace(/[?#].*$/, "");
     if (!key || seenNow.has(key) || [...sent].some(s => s.replace(/[?#].*$/, "") === key || (orig && s.includes(orig)))) continue;
     seenNow.add(key);
-    const c = await interviewCheck(link, String(h.src).split(" ")[0]);
+    const c = await interviewCheck(link, String(h.src).split(/[ (]/)[0]);
     console.log(`  인터뷰 교차 확인: ${String(h.title).slice(0, 40)} → ${c.ok ? "인터뷰" : "아님"}(${c.why})`);
     if (!c.ok || process.env.DRY_IV) continue;
     const text = `🎤 <b>[인터뷰 · 밤 보고 교차 확인]</b> <b>${esc(h.title)}</b>\n<i>${esc(h.src)}</i>\n${link}`;
