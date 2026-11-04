@@ -34,7 +34,12 @@ const line = n => {
 // "(정상)"으로 끝나는 노트는 안내(ℹ️)로, 나머지는 경고(⚠)로 표시
 const notes = sources.filter(s => s.note).map(s => `${/\(정상\)$/.test(s.note) ? "ℹ️" : "⚠"} ${s.source}: ${s.note}`).join("\n");
 const KW = data.keywords || [];
-const kwHits = sources.flatMap(s => s.items.filter(it => it.kw).map(it => ({ src: it.srcName || s.source, ...it })));
+// (11/5) 지면 칸(내일 자)과 온라인 결산에 같은 기사가 있으면 한 번만 센다 — 제목 앞 [N면]을 떼고 비교
+const kwSeen = new Set();
+const kwHits = sources.flatMap(s => s.items.filter(it => it.kw).map(it => ({ src: it.srcName || s.source, ...it })))
+  .filter(h => { const k = String(h.title).replace(/^\[[^\]]*\]\s*/, "").replace(/[^0-9A-Za-z가-힣]/g, "").slice(0, 14); if (kwSeen.has(k)) return false; kwSeen.add(k); return true; });
+const online = sources.filter(s => s.group === "온라인결산");
+const onlineLine = s => `· ${s.label}: ${s.note && !s.total ? "집계 실패 ⚠" : `${s.total}건`}${s.items.length ? ` <b>(언급 ${s.items.length}건)</b>` : ""}`;
 const kwLine = KW.length ? `🔎 <b>${KW.join("·")} 언급: ${kwHits.length}건</b>` : "";
 
 const caption = [
@@ -46,6 +51,7 @@ const caption = [
   `[부산방송]`, ...busan.map(line),
   ``,
   `[지면]`, ...paper.map(line),
+  ...(online.length ? [``, `[온라인 결산 · 오늘 네이버 송고]`, ...online.map(onlineLine)] : []),
   notes ? `\n${notes}` : "",
 ].join("\n").trim();
 

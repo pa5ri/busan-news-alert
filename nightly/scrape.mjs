@@ -15,6 +15,7 @@
 import puppeteer from "puppeteer";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { parseKookje, parseBusanPaper, parseBusanHome } from "./paper-tomorrow.mjs";
+import { tallyOnline, ONLINE_PAPERS } from "./online-tally.mjs";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // 부산MBC 등 인증서 문제 사이트 본문 조회용
 
@@ -414,6 +415,17 @@ try {
   await browser.close();
 }
 
+// ===== 온라인 결산(2026-11-05): 부산일보·국제신문이 오늘 네이버로 송고한 기사 수와 전재수 언급 수 =====
+// KBS부산 클로징 대기 뒤에 세어 최대한 늦은 시점까지 담는다. 실패해도 보고는 나간다.
+for (const { code, name } of ONLINE_PAPERS) {
+  let t = null; try { t = await tallyOnline(code, D); } catch (e) { console.log(`온라인 결산 실패(${name}): ${e.message}`); }
+  const base = { group: "온라인결산", source: `${name} 온라인`, label: name };
+  if (!t) { results.push({ ...base, total: 0, items: [], note: "온라인 결산 실패 — 네이버 목록을 읽지 못함" }); continue; }
+  console.log(`온라인 결산 ${name}: ${t.total}건 · 언급 ${t.mentions.length}건 · 못 읽음 ${t.unread}건`);
+  results.push({ ...base, total: t.total, items: t.mentions.map(a => ({ ...a, kw: true, srcName: `${name}(온라인)` })),
+    ...(t.unread ? { note: `온라인 결산: 본문을 못 읽은 기사 ${t.unread}건 — 언급 수가 그만큼 모자랄 수 있음` } : {}) });
+}
+
 // ===== 키워드 스캔 1단계: 수집기사 제목 매치 (정확·오탐 없음) =====
 // ※ 본문 언급은 아래 네이버 24시간 창 검색이 담당 — 네이버는 기사 '본문만' 색인하므로
 //   페이지 사이드바("많이 본 뉴스" 등)로 인한 오탐이 원천적으로 없다.
@@ -474,11 +486,11 @@ if (KEYWORDS.length && process.env.NAVER_ID && process.env.NAVER_SECRET) {
     const byKey = new Map();
     for (const s of results) for (const it of s.items) byKey.set(keyOf(it.url), it);
     const freshList = [];
-    // (11/5) 지면 칸에 없는 부산 2개지 언급은 내일 자 지면이 아니므로 목록에 '온라인'으로 밝힌다.
+    // (11/5) 부산 2개지의 온라인 언급은 위 온라인 결산이 전수로 세므로 여기선 지면 칸 표시만 한다(전날 밤 기사까지 섞여 결산과 어긋나지 않게).
     for (const w of winItems) {
       const k = keyOf(w.url);
       if (byKey.has(k)) byKey.get(k).kw = true;
-      else freshList.push(w.srcName === "국제신문" || w.srcName === "부산일보" ? { ...w, srcName: w.srcName + "(온라인)" } : w);
+      else if (w.srcName !== "국제신문" && w.srcName !== "부산일보") freshList.push(w);
     }
     const dedup = [...new Map(freshList.map(it => [keyOf(it.url), it])).values()];
     results.push({ group: "키워드검색", source: `${KEYWORDS.join("·")} 24시간(전체매체)`, items: dedup });

@@ -74,7 +74,12 @@ for (const [tabName, cols] of Object.entries(LAYOUT)) {
 const KW = data.keywords || [];
 if (KW.length) {
   const kwItems = [];
-  for (const s of bc) for (const it of s.items) if (it.kw) kwItems.push({ src: it.srcName || s.source, ...it });
+  const kwSeen = new Set();   // (11/5) 지면 칸과 온라인 결산에 같은 기사가 있으면 한 번만 — 보고 문구(run.mjs)와 같은 기준
+  for (const s of bc) for (const it of s.items) if (it.kw) {
+    const k = String(it.title).replace(/^\[[^\]]*\]\s*/, "").replace(/[^0-9A-Za-z가-힣]/g, "").slice(0, 14);
+    if (kwSeen.has(k)) continue; kwSeen.add(k);
+    kwItems.push({ src: it.srcName || s.source, ...it });
+  }
   const ws = wb.addWorksheet(`${KW.join("·")} 언급`, { views:[{ state:"frozen", ySplit:1 }] });
   ws.columns = [{ width: 16 }, { width: 80 }];
   const head = ws.getRow(1);

@@ -76,7 +76,7 @@ jobs:
         run: |
           failed=$(node -e '
             const d = JSON.parse(require("fs").readFileSync("data/broadcasters.json","utf8"));
-            const f = d.sources.filter(s => s.items.length === 0 && s.note && !/\(정상\)$/.test(s.note)).map(s => s.source);
+            const f = d.sources.filter(s => s.group !== "온라인결산" && s.items.length === 0 && s.note && !/\(정상\)$/.test(s.note)).map(s => s.source);
             process.stdout.write(f.join(","));
           ')
           date=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("data/broadcasters.json","utf8")).date.replace(/-/g,""))')
