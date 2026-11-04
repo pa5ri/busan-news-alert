@@ -22,7 +22,7 @@ const fstamp = dDash.replace(/-/g,"");
 const byName = Object.fromEntries(sources.map(s => [s.source, s]));
 const central = ["KBS 뉴스9","MBC 뉴스데스크","SBS 8뉴스","JTBC 뉴스룸","TV조선 뉴스9"];
 const busan   = ["KBS부산 뉴스9","부산MBC 뉴스데스크","KNN 뉴스아이","SBS 부산관련"];
-const paper   = ["부산일보","국제신문"];   // (11/5) 「부산 지면」 방과 같은 그날 자 실제 지면만
+const paper   = ["부산일보","국제신문"];   // (11/5) 내일 자 지면 예고
 const cnt = n => byName[n]?.items.length || 0;
 const total = [...central, ...busan, ...paper].reduce((a,n)=>a+cnt(n), 0);
 const line = n => {
@@ -78,7 +78,8 @@ async function crossInterview(hits) {
   const jeon = [];
   for (const dd of [dDash, new Date(d.getTime() + 86400e3).toISOString().slice(0, 10)])
     try { for (const l of readFileSync(`../archive/jeon/${dd}.jsonl`, "utf8").split("\n")) if (l) jeon.push(JSON.parse(l)); } catch {}
-  const ids = u => new Set((String(u).match(/[A-Za-z]{0,3}\d{6,}/g) || []));
+  // 국제신문 key=20261106.22001005는 통째로 한 토큰이다 — 숫자를 나누면 앞의 날짜만으로 같은 날 다른 기사와 잘못 이어진다(11/5 수정)
+  const ids = u => { const k = String(u).match(/key=([\d.]+)/); return new Set(k ? [k[1]] : (String(u).match(/[A-Za-z]{0,3}\d{6,}/g) || [])); };
   const naverOf = u => { const a = ids(u); if (!a.size) return ""; const r = jeon.find(j => [...ids(j.url)].some(x => a.has(x))); return r && /n\.news\.naver\.com/.test(r.link || "") ? r.link : ""; };
   const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const seenNow = new Set();

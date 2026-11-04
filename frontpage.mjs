@@ -191,22 +191,6 @@ export async function buildEditionMessages(code, name, ymd, mentionKeys = new Se
   return { msgs, pages: blocks.length, total, mentions: picked.length, picked };
 }
 
-// (2026-11-05) 밤 TV 보고의 [지면] 칸 — 「부산 지면」 방과 같은 자료(네이버 신문보기)·같은 언급 기준(제목 이름 또는 색인+본문 재확인).
-// 매체 → { items:[{title:"[면] 제목", url, kw?}], err? }
-export async function localEditionItems(ymd, mentionKeys = new Set()) {
-  const keyOf = url => (String(url).match(/article\/(\d+\/\d+)/) || [])[1] || "";
-  const out = {};
-  for (const p of LOCAL_PAPERS) {
-    let blocks = null, err = "";
-    for (let i = 0; i < 3 && !blocks; i++) { try { blocks = await fetchEdition(p.code, ymd); } catch (e) { err = e.message; await new Promise(r => setTimeout(r, 3000)); } }
-    if (!blocks) { out[p.name] = { items: [], err }; continue; }
-    const verified = await verifyIndexHits(blocks.flatMap(b => b.arts), mentionKeys, keyOf);
-    const isMention = a => /전재수/.test(a.title) || (mentionKeys.has(keyOf(a.url)) && verified.has(keyOf(a.url)));
-    out[p.name] = { items: blocks.flatMap(b => b.arts.map(a => ({ title: `[${b.page}] ${a.title}`, url: a.url, ...(isMention(a) ? { kw: true } : {}) }))) };
-  }
-  return out;
-}
-
 // ---- 석간 신문 모니터링 (2026-10-12): 문화일보·내일신문의 1면 머리기사·사설, 조간과 같은 양식으로 「조간/석간 신문」 방에 ----
 // 문화일보(021)는 네이버 신문보기(사설 표기가 제목 뒤 '[사설]'). 내일신문은 네이버 지면보기가 없어(086 → 404) 자사 홈을 읽는다:
 //   1면 = 홈 메인 기사(section.main-news 첫 기사, 이미지 경로 paper/YYYY/MM/DD로 당일 자 검증), 사설 = /opinion/editorial 목록 중 당일 날짜 항목.

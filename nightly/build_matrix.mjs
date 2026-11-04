@@ -14,7 +14,7 @@ const fstamp = dateStr.slice(0,10).replace(/\./g,"");
 const LAYOUT = {
   "중앙방송": ["KBS 뉴스9","MBC 뉴스데스크","SBS 8뉴스","JTBC 뉴스룸","TV조선 뉴스9"],
   "부산방송": ["KBS부산 뉴스9","부산MBC 뉴스데스크","KNN 뉴스아이","SBS 부산관련"],
-  "지면": ["부산일보","국제신문"],   // 그날 자 실제 지면(네이버 신문보기) — 「부산 지면」 방과 같은 기준(11/5)
+  "지면": ["부산일보","국제신문"],   // 내일 자 지면 예고(11/5 사용자 결정, nightly/paper-tomorrow.mjs)
 };
 const byName = Object.fromEntries(bc.map(s => [s.source, s]));
 

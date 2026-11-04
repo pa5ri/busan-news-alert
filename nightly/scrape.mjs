@@ -14,7 +14,7 @@
 //  JTBC 뉴스룸          → /program/NG10000002 전용판(video/NB), 페이지 날짜 검증 [프로그램+검증]
 import puppeteer from "puppeteer";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
-import { localEditionItems, LOCAL_PAPERS } from "../frontpage.mjs";
+import { parseKookje, parseBusanPaper, parseBusanHome } from "./paper-tomorrow.mjs";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; // 부산MBC 등 인증서 문제 사이트 본문 조회용
 
@@ -360,25 +360,38 @@ try {
     push("부산방송", "SBS 부산관련", items.slice(0, 25), items.length === 0 ? `${D_DOT}자 부산 태그 기사 없음` : undefined);
   } catch (e) { push("부산방송","SBS 부산관련",[],"실패: "+e.message); }
 
-  // 지면 — 「부산 지면」 방과 같은 기준: 그날 자 실제 지면만(네이버 신문보기, 면 순서, 제목 앞 [N면]). 일요일·연휴 휴간일은 0건이 정상.
-  // (2026-11-05) 신문사 홈 게재분 칸(국제신문 내일 자 예고·부산일보 내일 자+온라인)은 지면이 아니라서 뺐다(사용자 결정).
-  //   전재수 언급도 부산 지면 방과 같은 판정 — 제목에 이름, 또는 전재수 색인(최근 3일)에 있고 본문에 지금도 이름이 있는 기사.
-  const jeonKeys = new Set();
-  for (const dd of [D, dayShift(D, -1), dayShift(D, -2)]) {
-    try {
-      for (const l of readFileSync(`../archive/jeon/${dd.slice(0,4)}-${dd.slice(4,6)}-${dd.slice(6,8)}.jsonl`, "utf8").split("\n")) {
-        if (!l) continue;
-        try { const m = String(JSON.parse(l).link || "").match(/article\/(?:mnews\/)?(\d+\/\d+)/); if (m) jeonKeys.add(m[1]); } catch {}
-      }
-    } catch {}
-  }
-  const editions = await localEditionItems(D, jeonKeys);
-  for (const { name } of LOCAL_PAPERS) {
-    const e = editions[name];
-    if (e.err) { push("지면", name, [], "실패: " + e.err); continue; }
-    push("지면", name, e.items, e.items.length ? undefined : `${D_DASH}자 지면 없음 — 휴간일 (정상)`);
-    results[results.length - 1].label = `${name} · 오늘 자 지면`;
-  }
+  // 지면 — 내일 자 예고(2026-11-05 사용자 결정). 오늘 자는 아침 「부산 지면」 방에서 이미 봤다. 판별은 paper-tomorrow.mjs.
+  //   토요일(일요일 자)·금요일(토요일 자) 등 내일 자가 없는 날은 0건이 정상이다.
+  const D_NEXT = dayShift(D, 1);
+  try {
+    const into = new Map();
+    parseKookje(await withPage(["https://www.kookje.co.kr/", "http://www.kookje.co.kr/"], p => p.content()), D_NEXT, into);
+    // 홈에 없는 면까지: 전체기사 목록. 새 내일 자 기사가 안 나오는 쪽에서 멈춘다.
+    for (let pg = 1; pg <= 5; pg++) {
+      const before = into.size;
+      parseKookje(await withPage(`https://www.kookje.co.kr/news2011/asp/list_news.asp?code=00&pagenum=${pg}&page=${pg}`, p => p.content()), D_NEXT, into);
+      if (pg > 1 && into.size === before) break;
+    }
+    const items = [...into.values()];
+    push("지면", "국제신문", items, items.length ? undefined : `${D_NEXT.slice(4,6)}/${D_NEXT.slice(6,8)}자 기사 아직 없음 — 휴간일이거나 게재 전 (정상)`);
+    results[results.length - 1].label = "국제신문 · 내일 자 예고";
+  } catch (e) { push("지면", "국제신문", [], "수집 실패: " + e.message); }
+  try {
+    const paper = parseBusanPaper(await withPage("https://www.busan.com/newspaper/", p => p.content()));
+    console.log(`  부산일보 지면 페이지: ${paper.date} ${paper.items.length}건(내일 자 ${D_NEXT})`);   // 밤 10시에 내일 자가 올라와 있는지 실측용
+    if (paper.date === D_NEXT && paper.items.length) {
+      push("지면", "부산일보", paper.items);
+      results[results.length - 1].label = "부산일보 · 내일 자 지면";
+    } else if ([0, 6].includes(new Date(`${D_NEXT.slice(0,4)}-${D_NEXT.slice(4,6)}-${D_NEXT.slice(6,8)}T12:00:00Z`).getUTCDay())) {
+      // 토·일요일 자 지면이 없다(10/31·11/1 실측). 이날 홈 기사는 전부 온라인이라 예고로 내보내지 않는다.
+      push("지면", "부산일보", [], "내일(토·일요일) 자 지면 없음 (정상)");
+      results[results.length - 1].label = "부산일보 · 내일 자 지면";
+    } else {
+      const items = parseBusanHome(await withPage(["https://www.busan.com/", "https://busan.com/"], p => p.content()), D);
+      push("지면", "부산일보", items, items.length ? undefined : "홈에 오늘 올린 기사 없음 — 휴간일이거나 게재 전 (정상)");
+      results[results.length - 1].label = "부산일보 · 내일 자 예고(홈 게재, 온라인 일부 섞임)";
+    }
+  } catch (e) { push("지면", "부산일보", [], "수집 실패: " + e.message); }
 
   // ---- 맨 마지막: KBS부산 뉴스9 (방송 종료까지 대기) ----
   // KBS부산 뉴스9는 21:40쯤 시작해 22:10~22:20에 끝나고 리포트가 방송 중 순차 게시된다(2026-08-23 실측: 헤드라인 21:39 → 클로징 22:12).
@@ -442,7 +455,7 @@ if (KEYWORDS.length && process.env.NAVER_ID && process.env.NAVER_SECRET) {
           const dom = KW_DOMAINS.find(d => (it.originallink || it.link || "").includes(d.host));
           if (!dom) continue;
           winItems.push({ title: stripB(it.title), url: it.originallink || it.link, kw: true, srcName: dom.name,
-                          nlink: it.link, time: pub.toISOString() });
+                          time: pub.toISOString() });
         }
         if (items.length < 100) break; // 마지막 페이지
         const oldest = items.length ? new Date(items[items.length-1].pubDate) : null;
@@ -461,21 +474,11 @@ if (KEYWORDS.length && process.env.NAVER_ID && process.env.NAVER_SECRET) {
     const byKey = new Map();
     for (const s of results) for (const it of s.items) byKey.set(keyOf(it.url), it);
     const freshList = [];
-    // (11/5) 부산 2개지: 지면 칸의 언급은 위 판정으로 끝났다. 창 검색이 여기에 표시를 더하지 않는다 — 웹판엔 이름이 있어도 지면판엔 없을 수 있다(부산일보 082/0001403024).
-    //   지면에서 언급으로 표시된 기사는 목록에 두 번 올리지 않고, 그 밖의 부산 2개지 언급은 '온라인'으로 밝힌다.
-    const paperItems = results.filter(r => r.group === "지면").flatMap(r => r.items);
-    const paperKey = u => (String(u).match(/article\/(?:mnews\/)?(\d+\/\d+)/) || [])[1] || "";
-    const paperKw = new Set(paperItems.filter(it => it.kw).map(it => paperKey(it.url)));
+    // (11/5) 지면 칸에 없는 부산 2개지 언급은 내일 자 지면이 아니므로 목록에 '온라인'으로 밝힌다.
     for (const w of winItems) {
-      const isPaper = w.srcName === "국제신문" || w.srcName === "부산일보";
-      if (isPaper) {
-        if (paperKw.has(paperKey(w.nlink))) continue;
-        freshList.push({ ...w, srcName: w.srcName + "(온라인)" });
-        continue;
-      }
       const k = keyOf(w.url);
       if (byKey.has(k)) byKey.get(k).kw = true;
-      else freshList.push(w);
+      else freshList.push(w.srcName === "국제신문" || w.srcName === "부산일보" ? { ...w, srcName: w.srcName + "(온라인)" } : w);
     }
     const dedup = [...new Map(freshList.map(it => [keyOf(it.url), it])).values()];
     results.push({ group: "키워드검색", source: `${KEYWORDS.join("·")} 24시간(전체매체)`, items: dedup });
