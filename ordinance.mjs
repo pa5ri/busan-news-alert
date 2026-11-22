@@ -110,6 +110,64 @@ async function checkLawmaking(state, send) {
   }
 }
 
+// ── 의안 카드(2026-11-22 사용자 요청): 국회 「오늘의 법률안」 봇처럼 짧게 + 해시태그(의원·지역구·위원회·주제)로 모아 보기 ──
+// 비용 0원 규칙 기반: 첨부 원문(HWP 미리보기)의 발의의원·찬성 인원·제안이유(문제 → "이에 …" 목적)·주요내용에서 뽑는다.
+const tag = s => "#" + String(s).replace(/[^0-9A-Za-z가-힣_]/g, "");
+const DOW = ["일", "월", "화", "수", "목", "금", "토"];
+const fmtDate = d => { const m = String(d).match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/); if (!m) return String(d || "");
+  const t = new Date(`${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}T12:00:00+09:00`); return `${m[1]}년 ${+m[2]}월 ${+m[3]}일(${DOW[t.getDay()]})`; };
+/** 제목 → 주제 해시태그 1개: 기관명·조례 꼬리·흔한 꾸밈말을 떼고 붙여 쓴다(예: 「부산광역시교육청 학생 도박 예방교육 조례 일부개정조례안」 → #학생도박예방교육) */
+export function topicTag(title) {
+  let s = String(title).replace(/^부산광역시(교육청|의회)?\s*/, "").replace(/\s*(일부개정|전부개정|폐지)?조례안?$/, "").replace(/\s*조례\s*(일부개정|전부개정|폐지)조례안$/, "")
+    .replace(/\s*조례$/, "").replace(/에\s*관한$/, "").replace(/\s*(등\s*)?(의\s*)?(설치\s*및\s*(운영|운용)|운영\s*지원|지원|운영|운용|관리|육성|진흥|활성화|조성|촉진)(\s*등)?$/, "").trim();
+  if (/결의안|건의안|동의안|예산안|계획안|변경안/.test(title)) return "";   // 조례안이 아닌 의안은 종류 태그로 충분
+  const t = tag(s); return t.length >= 3 && t.length <= 22 ? t : "";
+}
+// 원문 한 줄 = 한 문단. 문장은 '…함/임/음/다/것' 뒤에서만 나눈다(날짜 속 마침표 「개정(2026. 3. 1.)」에서 자르지 않게). 표 조각(<…>)은 버린다.
+const sentences = s => String(s).split(/\n+/).flatMap(line => line.replace(/\s+/g, " ").split(/(?<=(?:함|임|음|다|것)\.?)\s+(?=[가-힣「｢“"(○])/))
+  .map(x => x.replace(/^\s*(○|[가-하]\.|\d+\.|▸|-)\s*/, "").trim()).filter(x => x.length >= 8 && !/[<>]/.test(x) && !/^\(?\s*단위\s*:/.test(x));
+const cut = (s, n = 80) => { s = String(s).trim(); if (s.length <= n) return s; const c = s.slice(0, n); return c.slice(0, Math.max(c.lastIndexOf(" "), n - 12)) + "…"; };
+/** 원문 미리보기 → { lead:대표발의 이름들, count:발의+찬성 인원, why:[문제, 목적] } */
+export function readPreview(preview) {
+  const p = String(preview || "");
+  const flat = p.replace(/[<>]+/g, " ").replace(/\s+/g, " ");
+  const lead = ((flat.match(/발의의원\s*:\s*([가-힣\s,]+?)\s*의원/) || [])[1] || "").split(/\s*,\s*/).map(x => x.replace(/\s/g, "")).filter(x => /^[가-힣]{2,4}$/.test(x));
+  const count = Number((flat.match(/\((\d+)\s*명\)/) || [])[1] || 0);
+  const sec = (p.match(/(?:제\s*안|개\s*정)\s*이\s*유\s*\n([\s\S]*?)(?:\n\s*\d\.\s*(?:주\s*요\s*내\s*용|참\s*고|주\s*문)|$)/) || [])[1] || "";
+  const main = (p.match(/주\s*요\s*내\s*용\s*\n([\s\S]*?)(?:\n\s*\d\.\s*참\s*고|$)/) || [])[1] || "";
+  const ss = sentences(sec), ms = sentences(main);
+  const purpose = ss.find((x, i) => i > 0 && /^(이에|따라서|이를 위해)/.test(x)) || ss[1] || ms[0] || "";
+  return { lead, count, why: [ss[0] || "", purpose && purpose !== ss[0] ? purpose : ""].filter(Boolean).map(x => cut(x.replace(/^(이에|따라서)\s*/, ""))) };
+}
+/** 의안 카드 문자열(HTML) */
+export function billCard({ title, no, date, proposer, committee, kind, preview, jeji, viewUrl }) {
+  const r = readPreview(preview);
+  const p = String(proposer || "");
+  const member = (p.match(/^\s*(?:\d+대\s*)?([가-힣]{2,4})\s*\(/) || p.match(/^\s*(?:\d+대\s*)?([가-힣]{2,4})\s*의원/) || [])[1];
+  const gu = (p.match(/\(\s*([가-힣]+(?:구|군))\s*\d*/) || [])[1];
+  let who;
+  if (member) { const names = r.lead.length ? r.lead : [member]; who = names.map(n => tag(n + "의원")).join(" ") + (r.count > names.length ? ` 등 ${r.count}인` : ""); }
+  else if (/시\s*장/.test(p)) who = `${tag("부산시장")} 제출`;
+  else if (/교육감/.test(p)) who = `${tag("부산교육감")} 제출`;
+  else who = p ? `${tag(p)} 제출` : "-";
+  const kindTag = /일부개정조례안/.test(title) ? "#조례개정" : /전부개정조례안/.test(title) ? "#조례전부개정" : /폐지조례안/.test(title) ? "#조례폐지" : /조례안/.test(title) ? "#조례제정"
+    : kind ? tag(kind) : "";
+  const tags = [topicTag(title), kindTag, gu ? tag(gu) : ""].filter(Boolean);
+  const why = r.why.length ? r.why : jeji ? [cut(sentences(jeji)[0] || jeji)] : [];
+  return [
+    `📥 <b>부산시의회 의안접수</b>${kind ? ` · ${esc(kind)}` : ""}`,
+    `<a href="${viewUrl}"><b>${esc(title)}</b></a>${no ? ` [${esc(no)}]` : ""}`,
+    ``,
+    `📅 <b>${esc(fmtDate(date) || "-")}</b>`,
+    `👤 ${esc(who)}`,
+    committee ? `🏛 ${esc(tag(committee.replace(/\s/g, "")))}` : "",
+    ``,
+    tags.length ? esc(tags.join(" ")) : "",
+    ...why.map(w => `- ${esc(w)}`),
+    why.length ? "" : `📎 세부내용은 원문 참조`,
+  ].filter((l, i, a) => !(l === "" && (a[i - 1] === "" || i === a.length - 1))).join("\n").trim();
+}
+
 // ── ② 의안접수 (의안정보시스템, 조례안만) ──
 const BILL_MENU = "DOM_000000103008000000";
 async function checkBills(state, send) {
@@ -175,32 +233,12 @@ async function checkBills(state, send) {
       let proposer = pick(/제안자\s*\n\s*([^\n]+)/);
       if (/^\(?\s*시\s*장\s*\)?$/.test(proposer)) proposer = "부산광역시장";
       const committee = pick(/소관위원회\s*:?\s*\n?\s*([^\n]+)/);
-      // 세부내용 확보: ① 첨부(HWP/HWPX) 미리보기 → ② 페이지의 제안요지 필드 → ③ 원문 바로보기 안내
-      let reason = "";
+      // (11/22) 짧은 카드 + 해시태그로 — 세부내용은 첨부 원문(HWP 미리보기) → 페이지의 제안요지 순. 제목을 누르면 상세 페이지.
+      let preview = "";
       const fm = detail.match(/href="(\/assem\/cms\/assem\/bill\/downloadfile\.busan\?[^"]+)"/);
-      if (fm) reason = sectionOf(await hwpPreview("https://council.busan.go.kr" + fm[1].replace(/&amp;/g, "&")), 1600);
-      if (!reason) {
-        const jeji = pick(/제안요지\s*\n\s*([^\n]{10,})/);
-        if (jeji) reason = jeji.slice(0, 1600);
-      }
-      let viewerNote = "";
-      if (!reason) {
-        const vm = detail.match(/href="(\/assem\/index\.busan\?contentsSid=\d+&(?:amp;)?filemask=[^"]+)"/);
-        viewerNote = vm
-          ? `📎 세부내용은 원문 참조: https://council.busan.go.kr${vm[1].replace(/&amp;/g, "&")}`
-          : `📎 세부내용은 상세 페이지의 첨부 원문 참조`;
-      }
-      const lines = [
-        `📥 <b>[부산시의회 의안접수${kind ? "·" + esc(kind) : ""}]</b>`,
-        `<b>${esc(b.title)}</b>${no ? ` [의안번호 ${esc(no)}]` : ""}`,
-        ``,
-        `📅 ${esc(date || "-")}   👤 ${esc(proposer || "-")}`,
-        committee ? `🏛 ${esc(committee)}` : "",
-        reason ? `\n${esc(reason)}` : "",
-        viewerNote ? `\n${viewerNote}` : "",
-        `\n🔗 ${viewUrl}`,
-      ].filter(l => l !== "").join("\n");
-      await send(lines);
+      if (fm) preview = await hwpPreview("https://council.busan.go.kr" + fm[1].replace(/&amp;/g, "&"));
+      const jeji = pick(/제안요지\s*\n\s*([^\n]{10,})/);
+      await send(billCard({ title: b.title, no, date, proposer, committee, kind, preview, jeji, viewUrl }));
       console.log(`📥 의안접수 발송: ${b.title.slice(0, 30)}`);
     } catch (e) { console.error(`의안 ${b.sid} 처리 실패:`, e.message); queue.push(b); }   // 실패분은 큐 끝으로 — 다음 실행에서 재시도
   }
