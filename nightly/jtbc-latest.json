@@ -1,143 +1,83 @@
 {
- "date": "2026-11-20",
- "fetchedAt": "2026-11-21T04:30:30.072Z",
+ "date": "2026-11-21",
+ "fetchedAt": "2026-11-22T03:48:48.636Z",
  "source": "local-pc",
  "items": [
   {
-   "title": "[뉴스룸 오프닝] '부정행위' 111명 / \"죽어도 이해 못 해\" 울분 / 충청·호남에 '기습 폭설'",
-   "url": "https://news.jtbc.co.kr/article/NB12329091"
+   "title": "[단독] 세무사 시험 뚫린 후 첫 국가자격시험…또 '6건 무효' 적발",
+   "url": "https://news.jtbc.co.kr/article/NB12329201"
   },
   {
-   "title": "'혹시 안 걸렸나?' 수능장 신호 정부가 '저장'…끝까지 쫓는다",
-   "url": "https://news.jtbc.co.kr/article/NB12329098"
+   "title": "'커닝 비상' 앞치마도 동원…'논술고사 보안전' 끝나지 않았다",
+   "url": "https://news.jtbc.co.kr/article/NB12329193"
   },
   {
-   "title": "재난문자도 안 울렸다…감독관 매의 눈에 딱 걸린 재수생",
-   "url": "https://news.jtbc.co.kr/article/NB12329090"
+   "title": "\"이 글도 조롱당하겠지\"…리트 만점자 '5줄 유서' 공개",
+   "url": "https://news.jtbc.co.kr/article/NB12329203"
   },
   {
-   "title": "\"지우개 없어? 반으로 잘라!\" 감독관이 전한 '초유의 수능'",
-   "url": "https://news.jtbc.co.kr/article/NB12329097"
+   "title": "수험생 상경길에 열차 탈선…길어진 사고 수습에 '발 동동'",
+   "url": "https://news.jtbc.co.kr/article/NB12329207"
   },
   {
-   "title": "\"인생 망치지 말라\"는데 111명…\"과거 수능도 못 믿겠다\"",
-   "url": "https://news.jtbc.co.kr/article/NB12329099"
+   "title": "조희대 탄핵 시점 '12·3이 딱'…국힘 \"대통령부터 탄핵해야\"",
+   "url": "https://news.jtbc.co.kr/article/NB12329213"
   },
   {
-   "title": "수능 '한계 왔다'…이 대통령 \"국가시험제도 전면 개편\"",
-   "url": "https://news.jtbc.co.kr/article/NB12329124"
+   "title": "이 대통령 대장동 의혹 반박…장동혁 \"억울하면 재판받으라\"",
+   "url": "https://news.jtbc.co.kr/article/NB12329200"
   },
   {
-   "title": "이진우 사망했어도 '시험지' 흔적 통해 수법 밝혀낸다",
-   "url": "https://news.jtbc.co.kr/article/NB12329102"
+   "title": "[인터뷰] \"한덕수 판결이 트리거였나\"…박성준에게 묻는 조희대 탄핵",
+   "url": "https://news.jtbc.co.kr/article/NB12329188"
   },
   {
-   "title": "[단독] 감독관 코앞 '고개 푹' 품속 모니터 확인…세무사 수석 드러난 수법",
-   "url": "https://news.jtbc.co.kr/article/NB12329088"
+   "title": "'투매 장세'에 무너진 뉴욕증시…월요일 코스피 덮칠 충격은",
+   "url": "https://news.jtbc.co.kr/article/NB12329212"
   },
   {
-   "title": "\"넌 아니지?\" 세무사 합격생들 울분…캐리어 끌고 '수십권' 펼쳤다",
-   "url": "https://news.jtbc.co.kr/article/NB12329089"
+   "title": "\"해외 데이터센터에 중과세\"…트럼프 몽니에 한국도 긴장",
+   "url": "https://news.jtbc.co.kr/article/NB12329199"
   },
   {
-   "title": "김건희 \"죽어도 이해 못 해\" 울먹이더니…판사에 \"감동\"",
-   "url": "https://news.jtbc.co.kr/article/NB12329087"
+   "title": "이 대통령 \"지방에 새로운 기회\"…지역 현장 2주 연속 방문",
+   "url": "https://news.jtbc.co.kr/article/NB12329198"
   },
   {
-   "title": "내란 못 박고도 한덕수 '쪼개기 무죄'…눈길 끈 반대의견",
-   "url": "https://news.jtbc.co.kr/article/NB12329104"
+   "title": "'실형 확정' 김건희 구치소 못 떠난다…남은 3건 재판은",
+   "url": "https://news.jtbc.co.kr/article/NB12329197"
   },
   {
-   "title": "민주당 '조희대 탄핵' 당론 채택…\"소추안 연내 처리\"",
-   "url": "https://news.jtbc.co.kr/article/NB12329086"
+   "title": "'브로맨스' 내세워 자화자찬…정작 동맹국엔 '종전 청구서'",
+   "url": "https://news.jtbc.co.kr/article/NB12329196"
   },
   {
-   "title": "\"총선 지면 누가 책임지나\"…'역풍 맞을라' 민주당 내 목소리",
-   "url": "https://news.jtbc.co.kr/article/NB12329105"
+   "title": "엔진 화재 경고로 비상 착륙…'한국인 포함' 전원 무사 대피",
+   "url": "https://news.jtbc.co.kr/article/NB12329204"
   },
   {
-   "title": "\"조희대 탄핵 광기\" 국힘 거리로…사과엔 갈팡질팡",
-   "url": "https://news.jtbc.co.kr/article/NB12329106"
+   "title": "'1톤 화물차' 다리 아래 하천으로 추락…70대 운전자 사망",
+   "url": "https://news.jtbc.co.kr/article/NB12329187"
   },
   {
-   "title": "'실익 없다' 탄핵 반대하는 이유…조희대 임기 6월에 끝",
-   "url": "https://news.jtbc.co.kr/article/NB12329107"
+   "title": "정맥 못 찾아 곳곳 주삿바늘…미 텍사스 '사형 집행' 논란",
+   "url": "https://news.jtbc.co.kr/article/NB12329186"
   },
   {
-   "title": "눈에 파묻힌 단풍…'최고 15㎝' 충청·호남 덮친 기습 폭설",
-   "url": "https://news.jtbc.co.kr/article/NB12329085"
+   "title": "무인 택시·드론 배달 일상이지만…'중국 미래도시'의 명암",
+   "url": "https://news.jtbc.co.kr/article/NB12329185"
   },
   {
-   "title": "부산행 KTX 고장에 840명 '생고생'…\"외국인도 많았는데\"",
-   "url": "https://news.jtbc.co.kr/article/NB12329109"
+   "title": "침착한 쐐기골에 '우승 축포'…두 마리 토끼 잡은 '이정효호'",
+   "url": "https://news.jtbc.co.kr/article/NB12329214"
   },
   {
-   "title": "폭행당해 쓰러졌는데 \"저거 왜 못 일어나!\"…격해진 올공",
-   "url": "https://news.jtbc.co.kr/article/NB12329110"
+   "title": "월드컵 선발 제외됐던 이재성…차범근 질문에 \"마음이 좀…\"",
+   "url": "https://news.jtbc.co.kr/article/NB12329211"
   },
   {
-   "title": "[단독] '걔 귀신 들렸다' 살해 부추겼나…흉기 구매 직전 통화",
-   "url": "https://news.jtbc.co.kr/article/NB12329112"
-  },
-  {
-   "title": "앤트로픽 축포 터졌는데, 증시 '뚝' AI 투자 '물음표'",
-   "url": "https://news.jtbc.co.kr/article/NB12329084"
-  },
-  {
-   "title": "'민주유공자법' 국회 통과…\"운동권 특혜\" 국힘은 불참",
-   "url": "https://news.jtbc.co.kr/article/NB12329111"
-  },
-  {
-   "title": "검찰, 혼쭐난 'SM시세조종 1심' 항소했다 또 '통무죄'",
-   "url": "https://news.jtbc.co.kr/article/NB12329081"
-  },
-  {
-   "title": "이행 방안 쏙 뺀 채…미·중·러 그들만의 '평화 선언'",
-   "url": "https://news.jtbc.co.kr/article/NB12329082"
-  },
-  {
-   "title": "진짜 승자는 시진핑·푸틴? 막 내린 '3자 회담' 평가 보니",
-   "url": "https://news.jtbc.co.kr/article/NB12329083"
-  },
-  {
-   "title": "김정은과는 끝내…일방적인 '짝사랑' 트럼프, 또 빈손",
-   "url": "https://news.jtbc.co.kr/article/NB12329080"
-  },
-  {
-   "title": "[밀착카메라] \"주차장 만차\" 비행기 놓칠 판…인기 못 따라가는 청주공항",
-   "url": "https://news.jtbc.co.kr/article/NB12329079"
-  },
-  {
-   "title": "[비하인드 뉴스] 대통령 \"화 많이 내실 줄..\" 재난문자 '뜻밖의 반응'",
-   "url": "https://news.jtbc.co.kr/article/NB12329115"
-  },
-  {
-   "title": "[비하인드 뉴스] \"당해도 싸다, 이것들아\" 조희대 때린 '윤어게인'",
-   "url": "https://news.jtbc.co.kr/article/NB12329077"
-  },
-  {
-   "title": "일본 득점왕 제쳤다! 이강인, 사상 첫 '국제선수상' 2연패",
-   "url": "https://news.jtbc.co.kr/article/NB12329113"
-  },
-  {
-   "title": "'구자욱 빅리그행' 현실로? MLB 사무국, 신분조회 요청",
-   "url": "https://news.jtbc.co.kr/article/NB12329129"
-  },
-  {
-   "title": "\"롯데 내년엔 꼭 우승해라!\"…'키움행' 정철원이 남긴 말",
-   "url": "https://news.jtbc.co.kr/article/NB12329130"
-  },
-  {
-   "title": "미국 언론 \"이정후, 재능은 충분한데…\"",
-   "url": "https://news.jtbc.co.kr/article/NB12329114"
-  },
-  {
-   "title": "[오늘, 이 장면] 골대 안 카메라도 철렁…이 정도면 캐넌슛 맞죠?",
-   "url": "https://news.jtbc.co.kr/article/NB12329128"
-  },
-  {
-   "title": "[앵커 한마디] 반성 참작해 줬더니, 돌아온 답",
-   "url": "https://news.jtbc.co.kr/article/NB12329076"
+   "title": "[날씨] 올가을 가장 추웠다…주말 내내 강추위 이어져",
+   "url": "https://news.jtbc.co.kr/article/NB12329215"
   }
  ]
 }
