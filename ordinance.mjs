@@ -29,7 +29,8 @@ async function getBuf(url) {
 // HWP(구형 CFB)·HWPX(신형 ZIP) 공통 미리보기 텍스트 추출
 async function hwpPreview(url) {
   try {
-    const buf = await getBuf(url);
+    // (11/22) 내려받기를 한 번 더 시도 — 11/11 기록에 'HWP 추출 실패: fetch failed' 2건, 그러면 요약 없는 카드가 나간다
+    let buf; try { buf = await getBuf(url); } catch { await new Promise(r => setTimeout(r, 4000)); buf = await getBuf(url); }
     const mod = await import("cfb");
     const CFB = mod.default || mod;
     const c = CFB.read(buf, { type: "buffer" });
@@ -55,8 +56,9 @@ function sectionOf(preview, cap = 2200) {
   return s.length > cap ? s.slice(0, cap) + "…" : s;
 }
 function deadlineOf(preview) {
-  const m = String(preview).match(/(\d{4}년\s*\d{1,2}월\s*\d{1,2}일\s*(?:\([^)]*\))?)\s*까지/);
-  return m ? m[1].replace(/\s+/g, " ") : "";
+  // (11/22) 실제 공고문은 「2026. 11. 4.(수) 18:00까지」 꼴이다 — 예전 식(2026년 11월 4일까지)만 보다가 기한이 안 나오고 있었다
+  const m = String(preview).match(/(\d{4}년\s*\d{1,2}월\s*\d{1,2}일\s*(?:\([^)]*\))?|\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\.?\s*(?:\([^)]*\))?(?:\s*\d{1,2}:\d{2})?)\s*까지/);
+  return m ? m[1].replace(/\s+/g, " ").trim() : "";
 }
 
 // ── ① 입법예고 (gosiGbn=P, 조례안) ──
@@ -87,25 +89,14 @@ async function checkLawmaking(state, send) {
   state.ordSno = Math.max(state.ordSno || 0, known, ...posts.map(p => p.sno));   // 위에서 집회 공고(A)까지 반영해 올린 기준점을 되돌리지 않는다
   for (const p of toSend) {
     const viewUrl = `https://council.busan.go.kr/council/lawmaking/view?sno=${p.sno}&gosiGbn=P`;
-    let body = "", deadline = "";
+    let preview = "";
     try {
       const detail = await get(viewUrl);
       const fm = detail.match(/href="(\/council\/lawmaking\/download\?[^"]+)"/);
-      if (fm) {
-        const prev = await hwpPreview("https://council.busan.go.kr" + fm[1].replace(/&amp;/g, "&"));
-        body = sectionOf(prev);
-        deadline = deadlineOf(prev);
-      }
+      if (fm) preview = await hwpPreview("https://council.busan.go.kr" + fm[1].replace(/&amp;/g, "&"));
     } catch (e) { console.error("입법예고 상세 실패:", e.message); }
     const title = p.title.replace(/\s*입법예고\s*$/, "");
-    const msg = [
-      `📜 <b>[부산시의회 입법예고]</b>`,
-      `<b>${esc(title)}</b>`,
-      deadline ? `\n🗳 의견제출: ${esc(deadline)}까지` : "",
-      body ? `\n${esc(body)}` : "",
-      `\n🔗 ${viewUrl}`,
-    ].filter(Boolean).join("\n");
-    await send(msg);
+    await send(lawCard({ title: p.title, preview, viewUrl }));   // (11/22) 의안과 같은 짧은 카드 + 해시태그
     console.log(`📜 입법예고 발송: ${title.slice(0, 30)}`);
   }
 }
@@ -118,8 +109,10 @@ const fmtDate = d => { const m = String(d).match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2}
   const t = new Date(`${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}T12:00:00+09:00`); return `${m[1]}년 ${+m[2]}월 ${+m[3]}일(${DOW[t.getDay()]})`; };
 /** 제목 → 주제 해시태그 1개: 기관명·조례 꼬리·흔한 꾸밈말을 떼고 붙여 쓴다(예: 「부산광역시교육청 학생 도박 예방교육 조례 일부개정조례안」 → #학생도박예방교육) */
 export function topicTag(title) {
-  let s = String(title).replace(/^부산광역시(교육청|의회)?\s*/, "").replace(/\s*(일부개정|전부개정|폐지)?조례안?$/, "").replace(/\s*조례\s*(일부개정|전부개정|폐지)조례안$/, "")
-    .replace(/\s*조례$/, "").replace(/에\s*관한$/, "").replace(/\s*(등\s*)?(의\s*)?(설치\s*및\s*(운영|운용)|운영\s*지원|지원|운영|운용|관리|육성|진흥|활성화|조성|촉진)(\s*등)?$/, "").trim();
+  let s = String(title).replace(/\s*입법예고\s*$/, "").replace(/^부산광역시(교육청|의회)?\s*/, "").replace(/\s*(일부개정|전부개정|폐지)?조례안?$/, "").replace(/\s*조례\s*(일부개정|전부개정|폐지)조례안$/, "")
+    .replace(/\s*조례$/, "").trim();
+  // 꼬리의 흔한 꾸밈말을 남지 않을 때까지 뗀다(「공영차고지 관리 및 운영」 → 공영차고지, 「주차장 설치 및 관리」 → 주차장)
+  for (let i = 0; i < 6; i++) { const t = s.replace(/\s*(에\s*관한|[을를]\s*위한|등|및|의|설치|지정|운영|운용|관리|지원|육성|진흥|활성화|조성|촉진)$/, "").trim(); if (t === s || t.replace(/\s/g, "").length < 2) break; s = t; }
   if (/결의안|건의안|동의안|예산안|계획안|변경안/.test(title)) return "";   // 조례안이 아닌 의안은 종류 태그로 충분
   const t = tag(s); return t.length >= 3 && t.length <= 22 ? t : "";
 }
@@ -133,8 +126,9 @@ export function readPreview(preview) {
   const flat = p.replace(/[<>]+/g, " ").replace(/\s+/g, " ");
   const lead = ((flat.match(/발의의원\s*:\s*([가-힣\s,]+?)\s*의원/) || [])[1] || "").split(/\s*,\s*/).map(x => x.replace(/\s/g, "")).filter(x => /^[가-힣]{2,4}$/.test(x));
   const count = Number((flat.match(/\((\d+)\s*명\)/) || [])[1] || 0);
-  const sec = (p.match(/(?:제\s*안|개\s*정)\s*이\s*유\s*\n([\s\S]*?)(?:\n\s*\d\.\s*(?:주\s*요\s*내\s*용|참\s*고|주\s*문)|$)/) || [])[1] || "";
-  const main = (p.match(/주\s*요\s*내\s*용\s*\n([\s\S]*?)(?:\n\s*\d\.\s*참\s*고|$)/) || [])[1] || "";
+  // 구간은 다음 번호 제목(「3. 주요내용」「4. 의견제출」 등) 앞까지
+  const sec = (p.match(/(?:제\s*안|개\s*정)\s*이\s*유\s*\n([\s\S]*?)(?:\n\s*\d\.\s*[가-힣]|$)/) || [])[1] || "";
+  const main = (p.match(/주\s*요\s*내\s*용\s*\n([\s\S]*?)(?:\n\s*\d\.\s*[가-힣]|$)/) || [])[1] || "";
   const ss = sentences(sec), ms = sentences(main);
   const purpose = ss.find((x, i) => i > 0 && /^(이에|따라서|이를 위해)/.test(x)) || ss[1] || ms[0] || "";
   return { lead, count, why: [ss[0] || "", purpose && purpose !== ss[0] ? purpose : ""].filter(Boolean).map(x => cut(x.replace(/^(이에|따라서)\s*/, ""))) };
@@ -165,6 +159,32 @@ export function billCard({ title, no, date, proposer, committee, kind, preview, 
     tags.length ? esc(tags.join(" ")) : "",
     ...why.map(w => `- ${esc(w)}`),
     why.length ? "" : `📎 세부내용은 원문 참조`,
+  ].filter((l, i, a) => !(l === "" && (a[i - 1] === "" || i === a.length - 1))).join("\n").trim();
+}
+
+/** 입법예고 카드(11/22): 의안 카드와 같은 틀. 공고문엔 발의자가 없어 공고번호·공고일·의견제출 기한·담당 전문위원실(→ 소관위)로 채운다.
+ *  주제 태그가 의안 카드와 같아(#공영차고지) 눌러 보면 입법예고 → 의안접수가 한 줄로 이어진다. */
+export function lawCard({ title, preview, viewUrl }) {
+  const p = String(preview || "");
+  const name = String(title).replace(/\s*입법예고\s*$/, "");
+  const no = (p.match(/공고\s*제\s*(\d{4}\s*-\s*\d+)\s*호/) || [])[1]?.replace(/\s/g, "");
+  const dm = p.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+  const committee = (p.match(/부산광역시의회\s*([가-힣]+?)전문위원실/) || [])[1];
+  const deadline = deadlineOf(p);
+  const r = readPreview(p);
+  const kindTag = /일부개정조례안/.test(name) ? "#조례개정" : /전부개정조례안/.test(name) ? "#조례전부개정" : /폐지조례안/.test(name) ? "#조례폐지" : "#조례제정";
+  const tags = [topicTag(name), kindTag, "#입법예고"].filter(Boolean);
+  return [
+    `📜 <b>부산시의회 입법예고</b>`,
+    `<a href="${viewUrl}"><b>${esc(name)}</b></a>${no ? ` [공고 ${esc(no)}]` : ""}`,
+    ``,
+    dm ? `📅 <b>${esc(fmtDate(`${dm[1]}-${dm[2]}-${dm[3]}`))}</b> 공고` : "",
+    deadline ? `🗳 의견제출 ${esc(deadline)}까지` : "",
+    committee ? `🏛 ${esc(tag(committee + "위원회"))}` : "",
+    ``,
+    esc(tags.join(" ")),
+    ...r.why.map(w => `- ${esc(w)}`),
+    r.why.length ? "" : `📎 세부내용은 원문 참조`,
   ].filter((l, i, a) => !(l === "" && (a[i - 1] === "" || i === a.length - 1))).join("\n").trim();
 }
 
