@@ -94,6 +94,7 @@ async function crossInterview(hits) {
     const key = link.replace(/[?#].*$/, ""), orig = String(h.url || "").replace(/[?#].*$/, "");
     if (!key || seenNow.has(key) || [...sent].some(s => s.replace(/[?#].*$/, "") === key || (orig && s.includes(orig)))) continue;
     seenNow.add(key);
+    await new Promise(r => setTimeout(r, 800));   // (11/22) 온라인 결산 직후라 천천히 — 연달아 읽다 429로 판별을 못 한 건이 있었다
     const c = await interviewCheck(link, String(h.src).split(/[ (]/)[0]);
     console.log(`  인터뷰 교차 확인: ${String(h.title).slice(0, 40)} → ${c.ok ? "인터뷰" : "아님"}(${c.why})`);
     if (!c.ok || process.env.DRY_IV) continue;

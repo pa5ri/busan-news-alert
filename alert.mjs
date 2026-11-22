@@ -1167,9 +1167,10 @@ async function maybeIvRetry() {
 // 제목 규칙만으로는 놓친 문답체 인터뷰(머니투데이·뉴시스 취임 100일, 노컷 라디오 전문)를 채운다. 실측 39건 조회 → 3건.
 async function maybeInterviewBackfill() {
   const ivv = state.interviewBackfillVer || 0;
-  if (ivv >= 5 || !(TOPIC_GROUP && TOPICS["인터뷰"])) return;
-  const span = ivv === 0 ? 14 : 3;   // 2차(10/8): 자사 방송 출연 기준 추가분만 최근 3일 / 3차(10/19): 문답 쌍 기준 추가분만 최근 3일
-  state.interviewBackfillVer = 5;   // 4차(10/27): 물음표 문답(시사IN형) / 5차(11/1): 자사 서술형 인터뷰(뉴스1 초대석)·잘린 제목 — 각각 추가분만 최근 3일
+  if (ivv >= 6 || !(TOPIC_GROUP && TOPICS["인터뷰"])) return;
+  const span = ivv === 0 ? 14 : ivv === 5 ? 5 : 3;   // 2차(10/8): 자사 방송 출연 기준 추가분만 최근 3일 / 3차(10/19): 문답 쌍 기준 추가분만 최근 3일
+  state.interviewBackfillVer = 6;   // 4차(10/27): 물음표 문답(시사IN형) / 5차(11/1): 자사 서술형 인터뷰(뉴스1 초대석)·잘린 제목 — 각각 추가분만 최근 3일
+  // 6차(11/22): 제목 조건 밖의 전재수 언급 기사 중 본문이 '자사 서술형 인터뷰'인 것(국민일보 11/19 「WDC 바통 넘겨받은 부산시…」) — 최근 5일
   const seenT = new Set(); const cands = [];
   for (const d of [...Array(span)].map((_, i) => kstDate(-i))) {
     const f = `archive/jeon/${d}.jsonl`;
@@ -1177,7 +1178,8 @@ async function maybeInterviewBackfill() {
     for (const l of readFileSync(f, "utf8").split("\n")) {
       if (!l) continue; let r; try { r = JSON.parse(l); } catch { continue; }
       const missed = ivv === 4 && /437\/0000518527/.test(r.link || "");   // 5차: 10/31 조회 실패로 빠진 JTBC [인터뷰] 1건(로그 확인분)만 제목 규칙 기사여도 포함
-      if (!missed && (!RE_IV_TITLE.test(r.t) || specialKind({ t: r.t }) || !/n\.news\.naver\.com/.test(r.link || ""))) continue;
+      if (ivv === 5) { if (RE_IV_TITLE.test(r.t) || specialKind({ t: r.t }) || !/n\.news\.naver\.com/.test(r.link || "")) continue; }   // 6차: 제목 조건 '밖'만
+      else if (!missed && (!RE_IV_TITLE.test(r.t) || specialKind({ t: r.t }) || !/n\.news\.naver\.com/.test(r.link || ""))) continue;
       const k = r.t.replace(/\s/g, "").slice(0, 20); if (seenT.has(k)) continue; seenT.add(k);
       cands.push(r);
     }
@@ -1185,7 +1187,9 @@ async function maybeInterviewBackfill() {
   let n = 0;
   for (const r of cands.sort((a, b) => new Date(a.pub) - new Date(b.pub))) {
     const { name } = pressInfo(r.url || r.link);
+    if (ivv === 5) await new Promise(x => setTimeout(x, 400));   // 6차는 후보가 수백 건 — 천천히
     let chk = { ok: false }; try { chk = await interviewCheck(r.link, name); } catch {}
+    if (ivv === 5 && !/자사 서술형/.test(chk.why || "")) continue;
     if (!chk.ok || (ivv === 1 && !/자사 방송/.test(chk.why)) || (ivv === 2 && !/문답 쌍/.test(chk.why)) || (ivv === 3 && !/물음표 문답/.test(chk.why)) || (ivv === 4 && !/자사 서술형/.test(chk.why) && !/437\/0000518527/.test(r.link || ""))) continue;   // 2차·3차는 그 회차의 새 기준으로 잡히는 것만
 
     const d = new Date(new Date(r.pub).getTime() + 9 * 3600e3).toISOString().slice(5, 10).replace("-", "/");
@@ -1478,7 +1482,7 @@ async function runJeonIndex() {
   if (Date.now() - jeonLast < JEON_INTERVAL_MS) return;
   jeonLast = Date.now();
   const pages = state.jeonInit ? [1] : [1, 101, 201, 301, 401, 501, 601, 701, 801, 901];
-  let added = 0;
+  let added = 0; const fresh = [];
   for (const start of pages) {
     let j;
     try {
@@ -1496,7 +1500,7 @@ async function runJeonIndex() {
       try {
         mkdirSync("archive/jeon", { recursive: true });
         appendFileSync(`archive/jeon/${day}.jsonl`, JSON.stringify({ url, link: it.link, t: strip(it.title), pub: it.pubDate }) + "\n");
-        added++;
+        added++; if (state.jeonInit) fresh.push(it);
       } catch (e) { console.error("전재수 색인 기록 실패:", e.message); }
     }
     if ((j.items || []).length < 100) break;
@@ -1504,6 +1508,23 @@ async function runJeonIndex() {
   }
   if (!state.jeonInit) { state.jeonInit = true; console.log(`전재수 색인 초기 적재: ${added}건`); }
   else if (added) console.log(`  전재수 색인 +${added}`);
+  // (11/22) 제목으로는 알 수 없는 인터뷰: 새로 색인된 기사 중 제목 조건 밖의 것을 본문으로 판별해, '자사 서술형 인터뷰'만 인터뷰 방으로.
+  //   사례: 국민일보 「WDC 바통 넘겨받은 부산시, 해양수도에 디자인 더한다」(11/19) — 기사 안에 "전재수 부산시장 인터뷰" 꼭지.
+  //   문답 줄 수 같은 다른 근거는 제목 조건 없이 쓰면 일정표·분석 기사가 걸린다(저장본 실측: 제목 조건 밖 40건 중 38건 오탐) → 쓰지 않는다.
+  if (fresh.length && TOPIC_GROUP && TOPICS["인터뷰"]) {
+    for (const it of fresh.slice(0, 25)) {
+      const title = strip(it.title);
+      if (RE_IV_TITLE.test(title) || specialKind({ t: title }) || !/n\.news\.naver\.com/.test(it.link || "")) continue;   // 제목 조건에 드는 기사는 본 흐름이 맡는다
+      if ((state.ivSent || []).some(u => u.split("?")[0] === String(it.link).split("?")[0])) continue;
+      const { name } = pressInfo(it.originallink || it.link);
+      let c = { ok: false }; try { c = await interviewCheck(it.link, name); } catch {}
+      if (c.ok && /자사 서술형/.test(c.why)) {
+        const ok = await sendCat("인터뷰", `${SPECIAL_EMOJI["인터뷰"]} <b>[인터뷰 · 본문 판별]</b> <b>${esc(title)}</b>\n<i>${esc(name)}</i>\n${it.link}`);
+        console.log(`🎤 색인 본문 판별 인터뷰 → ${ok ? "발송" : "발송 실패"}: ${title.slice(0, 40)} (${c.why})`);
+      }
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
 }
 // 해당 날짜들의 전재수 URL 집합
 function loadJeonUrls(dates) {

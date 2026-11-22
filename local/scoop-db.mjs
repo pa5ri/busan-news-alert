@@ -34,7 +34,10 @@ async function body(url) {
   } catch { return ""; } finally { clearTimeout(to); }
 }
 
-const since = Date.now() - 14 * 86400e3;
+// (11/22) PC를 14일 넘게 꺼 두면 그 사이 날짜가 창 밖으로 빠진다 → 마지막 저장일부터의 공백 + 3일이 더 길면 그만큼 넓힌다
+const lastSaved = readdirSync(DB).filter(f => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().pop();
+const gapDays = lastSaved ? Math.ceil((Date.now() - new Date(lastSaved.slice(0, 10) + "T00:00:00+09:00").getTime()) / 86400e3) + 3 : 0;
+const since = Date.now() - Math.max(14, gapDays) * 86400e3;
 const days = existsSync(resolve(ROOT, "scoop")) ? readdirSync(resolve(ROOT, "scoop")).filter(f => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).map(f => f.slice(0, 10)).filter(d => new Date(d + "T00:00:00+09:00").getTime() >= since).sort() : [];
 let added = 0, failed = 0, skipped = 0;
 for (const d of days) {

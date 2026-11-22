@@ -5,14 +5,17 @@ const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 export const ONLINE_PAPERS = [{ code: "082", name: "부산일보" }, { code: "658", name: "국제신문" }];
 const clean = s => String(s).replace(/<[^>]+>/g, "").replace(/&quot;/g, '"').replace(/&#0*39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&middot;/g, "·").replace(/&hellip;/g, "…").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 
-async function get(url, ms = 15000) {
-  for (let i = 0; i < 3; i++) {
-    if (i) await new Promise(r => setTimeout(r, 2000 * i));
+async function get(url, ms = 15000, tries = 3) {
+  for (let i = 0; i < tries; i++) {
+    let limited = false;
     const ac = new AbortController(); const to = setTimeout(() => ac.abort(), ms);
     try {
       const r = await fetch(url, { headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9", Referer: "https://news.naver.com/" }, signal: ac.signal });
       if (r.ok) { const b = new Uint8Array(await r.arrayBuffer()); return new TextDecoder(/euc-kr/i.test(r.headers.get("content-type") || "") ? "euc-kr" : "utf-8").decode(b); }
+      limited = r.status === 429;
     } catch {} finally { clearTimeout(to); }
+    // 429(너무 잦은 요청)는 길게 쉰다 — 서버(해외 러너)에선 6개 동시 요청에 하루 26건까지 본문을 못 읽었다(11/19 실행 기록)
+    if (i < tries - 1) await new Promise(r => setTimeout(r, limited ? 6000 * (i + 1) : 2000 * (i + 1)));
   }
   return null;
 }
@@ -31,24 +34,32 @@ async function listIds(code, ymd) {
 }
 
 /** → { total, mentions:[{title,url}], unread, other } total=그날 기사 수(게재일이 다른 곁가지 제외), unread=본문을 못 읽은 수. 목록 실패면 null. */
-export async function tallyOnline(code, ymd, concurrency = 6) {
+export async function tallyOnline(code, ymd, concurrency = 3) {
   const ids = await listIds(code, ymd); if (!ids) return null;
   const dash = `${ymd.slice(0, 4)}-${ymd.slice(4, 6)}-${ymd.slice(6, 8)}`;
-  const queue = [...ids]; const mentions = []; let total = 0, unread = 0, other = 0;
+  const queue = [...ids]; const mentions = []; let total = 0, unread = 0, other = 0; const again = [];
+  // 기사 1건 읽기 → 읽었으면 true. 못 읽으면 false(집계에는 아직 넣지 않는다)
+  const one = async (id, tries) => {
+    const url = `https://n.news.naver.com/mnews/article/${code}/${id}`;
+    const h = await get(url, 15000, tries);
+    if (h === null) return false;
+    const when = (h.match(/data-date-time="(\d{4}-\d{2}-\d{2})/) || [])[1];
+    if (when && when !== dash) { other++; return true; }
+    total++;
+    const title = clean((h.match(/<meta property="og:title" content="([^"]+)"/) || [])[1] || "");
+    const body = (h.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1];
+    if (body === undefined && !title) { unread++; return true; }
+    if (/전재수/.test(title) || (body && body.includes("전재수"))) mentions.push({ title, url, id });
+    return true;
+  };
   await Promise.all(Array.from({ length: concurrency }, async () => {
-    while (queue.length) {
-      const id = queue.shift(); const url = `https://n.news.naver.com/mnews/article/${code}/${id}`;
-      const h = await get(url);
-      if (h === null) { total++; unread++; continue; }
-      const when = (h.match(/data-date-time="(\d{4}-\d{2}-\d{2})/) || [])[1];
-      if (when && when !== dash) { other++; continue; }
-      total++;
-      const title = clean((h.match(/<meta property="og:title" content="([^"]+)"/) || [])[1] || "");
-      const body = (h.match(/<article[^>]*id="dic_area"[^>]*>([\s\S]*?)<\/article>/) || [])[1];
-      if (body === undefined && !title) { unread++; continue; }
-      if (/전재수/.test(title) || (body && body.includes("전재수"))) mentions.push({ title, url, id });
-    }
+    while (queue.length) { const id = queue.shift(); if (!await one(id, 2)) again.push(id); await new Promise(r => setTimeout(r, 150)); }
   }));
+  // (11/22) 못 읽은 기사는 잠깐 쉬었다가 하나씩 천천히 다시 읽는다. 그래도 안 되면 건수에는 넣고 '못 읽음'으로 밝힌다.
+  if (again.length) {
+    await new Promise(r => setTimeout(r, 8000));
+    for (const id of again) { if (!await one(id, 3)) { total++; unread++; } await new Promise(r => setTimeout(r, 700)); }
+  }
   mentions.sort((a, b) => a.id.localeCompare(b.id));
   return { total, mentions: mentions.map(({ title, url }) => ({ title, url })), unread, other };
 }

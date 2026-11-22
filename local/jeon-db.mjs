@@ -29,7 +29,11 @@ const failed = existsSync(failFile) ? JSON.parse(readFileSync(failFile, "utf8"))
 
 
 // 대상 목록
-const since = Date.now() - DAYS * 86400e3;
+// (11/22) PC를 오래 꺼 두면 창(14일) 밖으로 밀린 날짜가 영영 빠진다(11/9 → 11/22 사이 13일 공백으로 아슬아슬했다).
+//   마지막으로 저장한 날짜부터 오늘까지의 공백 + 3일이 14일보다 길면 그만큼 넓혀 본다.
+const lastSaved = readdirSync(DB).filter(f => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().pop();
+const gapDays = lastSaved ? Math.ceil((Date.now() - new Date(lastSaved.slice(0, 10) + "T00:00:00+09:00").getTime()) / 86400e3) + 3 : 0;
+const since = Date.now() - Math.max(DAYS, gapDays) * 86400e3;
 const files = readdirSync(resolve(ROOT, "archive", "jeon")).filter(f => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort();
 const todo = []; const seen = new Set();
 for (const f of files) {

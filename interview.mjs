@@ -36,7 +36,8 @@ export async function interviewCheck(naverUrl, srcName = "") {
     try {
       const r = await fetch(naverUrl, { headers: { "User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9" }, signal: ac.signal });
       if (r.ok) html = await r.text();
-      else { lastWhy = "HTTP " + r.status; if (r.status < 500 && r.status !== 429) break; }
+      else { lastWhy = "HTTP " + r.status; if (r.status < 500 && r.status !== 429) break;
+        if (r.status === 429) await new Promise(x => setTimeout(x, 7000)); }   // (11/22) 429는 더 쉰다 — 밤 보고 교차 확인이 「아님(HTTP 429)」로 끝난 건(11/20)
     } catch (e) { lastWhy = "조회 실패"; } finally { clearTimeout(to); }
   }
   if (html === undefined) return { ok: false, why: lastWhy, fetchFail: true };
@@ -62,6 +63,8 @@ export function judgeText(txt, pageTitle = "", srcName = "") {
     .replace(/[^.\n]*인터뷰\s?(를|을)?\s?(하고 있다|하고 있는 모습|중이다)\.?(\s*[ⓒ©][^\n]{0,20}?기자)?(\s*\d{4}[.\-/]\s?\d{1,2}[.\-/]\s?\d{1,2}\.?)?(\s*\/?\s*\S+@\S+)?(\s*\[[^\]\n]{1,20}\])?/g, " ")
     .replace(/[^.\n]*인터뷰\s?중인[^.\n[]{0,30}(\[[^\]\n]{1,20}\])?/g, " ");
   const titleMayor = /전재수|부산시장/.test(pageTitle);
+  // (11/22) 일정표·일지는 줄마다 '-'로 시작해 문답으로 세어진다(뉴스핌 「전국 광역 단체장 ○월 ○일 일정」 문답 24줄 — 저장본에 28건)
+  if (/(광역|단체장|시장|도지사|교육감)[^"“]{0,20}일정\s*$|^\s*\[일지\]/.test(pageTitle)) return { ok: false, why: "일정표·일지" };
   // (10/20) 인터뷰 대상이 시장인지부터 — 본문에 전재수·부산시장이 없으면 누구의 인터뷰든 우리 코너가 아니다.
   // 사례: 국제신문 「“광안리 해변 보행공간 개선…”」(수영구청장 취임 100일 인터뷰)가 '제목 전체 인용문' 가드 + 자사 인터뷰 규칙으로 들어옴.
   if (!/전재수|부산시장/.test(txt)) return { ok: false, why: "시장 인터뷰 아님(본문에 시장 언급 없음)" };
