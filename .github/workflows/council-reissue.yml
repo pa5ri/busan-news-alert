@@ -1,0 +1,73 @@
+name: 시의회 입법예고·의안 재게시(일회성)
+
+# 2026-11-26: 10대 의회(2026-07-01~) 입법예고·의안을 새 카드 형식으로 새 방에 다시 올린다(council-reissue.mjs).
+# 새 방 번호는 make-topic.yml로 만든 뒤 입력값으로 넘긴다. mode=dry면 발송 없이 카드만 로그에 남긴다(서버에서 의회 사이트가 열리는지 확인용).
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry(시험) 또는 send(발송)"
+        required: true
+        default: "dry"
+      law_thread:
+        description: "새 입법예고 방 번호"
+        required: false
+        default: ""
+      bill_thread:
+        description: "새 의안정보 방 번호"
+        required: false
+        default: ""
+      since:
+        description: "이 날짜 이후(10대 의회 = 2026-07-01)"
+        required: false
+        default: "2026-07-01"
+      only:
+        description: "비우면 둘 다, law 또는 bill"
+        required: false
+        default: ""
+      law_after:
+        description: "끊겼을 때 이어서: 마지막으로 보낸 입법예고 번호"
+        required: false
+        default: "0"
+      bill_after:
+        description: "끊겼을 때 이어서: 마지막으로 보낸 의안 번호"
+        required: false
+        default: "0"
+
+concurrency:
+  group: council-reissue
+  cancel-in-progress: false
+
+jobs:
+  reissue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - name: 지금 쓰는 방 번호(입법예고·의안정보만 — 번호는 비밀이 아님)
+        env:
+          TG_TOPICS: ${{ secrets.TG_TOPICS }}
+          TG_TOPICS_OVERRIDE: ${{ vars.TG_TOPICS_OVERRIDE }}
+        run: |
+          node -e 'const t={...JSON.parse(process.env.TG_TOPICS||"{}"),...JSON.parse(process.env.TG_TOPICS_OVERRIDE||"{}")};console.log("입법예고="+t["입법예고"]+" 의안정보="+t["의안정보"])'
+      - name: 재게시
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_TOPIC_GROUP: ${{ secrets.TG_TOPIC_GROUP }}
+          LAW_THREAD: ${{ inputs.law_thread }}
+          BILL_THREAD: ${{ inputs.bill_thread }}
+          MODE: ${{ inputs.mode }}
+          SINCE: ${{ inputs.since }}
+          ONLY: ${{ inputs.only }}
+          LAW_AFTER: ${{ inputs.law_after }}
+          BILL_AFTER: ${{ inputs.bill_after }}
+        run: |
+          set -- --since "$SINCE" --law-after "$LAW_AFTER" --bill-after "$BILL_AFTER"
+          [ -n "$ONLY" ] && set -- "$@" --only "$ONLY"
+          [ "$MODE" = "send" ] && set -- "$@" --send
+          node council-reissue.mjs "$@"
+          [ -f reissue-preview.txt ] && { echo "──── 시험 카드 앞부분 ────"; head -c 6000 reissue-preview.txt; } || true

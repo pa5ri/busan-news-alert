@@ -38,6 +38,7 @@ jobs:
           # 10/27 봇 통합: 브리핑·입법예고·의안 전용 봇을 넘기지 않으면 alert.mjs가 실시간 봇(TG_BOT_TOKEN)으로 보낸다
           TG_TOPIC_GROUP: ${{ secrets.TG_TOPIC_GROUP }}
           TG_TOPICS: ${{ secrets.TG_TOPICS }}
+          TG_TOPICS_OVERRIDE: ${{ vars.TG_TOPICS_OVERRIDE }}   # 11/26 방 번호 덮어쓰기(저장소 변수)
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           BRIEF_NOW: ${{ inputs.brief_now == 'true' && '1' || '' }}
           POLL_INTERVAL_SEC: "120"

@@ -186,6 +186,9 @@ const CHAT_IDS = String(TG_CHAT_ID).split(",").map(s => s.trim()).filter(Boolean
 const TOPIC_GROUP = process.env.TG_TOPIC_GROUP || "";
 let TOPICS = {};
 try { TOPICS = JSON.parse(process.env.TG_TOPICS || "{}"); } catch { TOPICS = {}; }
+// (11/26) 주제 번호 덮어쓰기 — 저장소 변수(vars.TG_TOPICS_OVERRIDE). 주제 번호는 비밀이 아니고, 비밀값 전체를 다시 쓰다 다른 방 번호를 잃을 위험을 피한다.
+//   첫 사용: 시의회 입법예고·의안정보 방을 새로 만들어 10대 의회분을 새 카드로 다시 올리면서 새 방 번호를 여기에 둔다.
+try { Object.assign(TOPICS, JSON.parse(process.env.TG_TOPICS_OVERRIDE || "{}")); } catch {}
 
 // 기능별 목적지 — 통합 그룹의 주제가 설정돼 있으면 그 주제로, 없으면 기존 방으로.
 // 반환값은 sendMessage 본문에 그대로 펼쳐 쓴다: { chat_id, message_thread_id? }
